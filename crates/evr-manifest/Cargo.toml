@@ -1,0 +1,16 @@
+[package]
+name = "evr-manifest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand = "0.8"

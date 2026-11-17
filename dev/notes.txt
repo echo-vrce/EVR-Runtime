@@ -1,0 +1,2 @@
+- New in-game UPDATES card and panel
+- Update, skip and restart from the menu

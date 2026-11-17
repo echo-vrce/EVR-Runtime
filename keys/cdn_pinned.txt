@@ -1,0 +1,5 @@
+# AtlasCDN index signing keys: LABEL BASE64_ED25519_PUBKEY. Atlas signs per-guild indexes with its own key (label
+# ATLAS; also served at GET /evr/cdn/pubkey). Empty: the runtime's CDN client stays off.
+# DEV is the local test key (same as pinned.txt) for `evr-sign cdn`: remove before a release.
+ATLAS p3YPa+RW2u5HPkFRF1URRPR+DGBsAuXsRm24xzqEDyA=
+DEV tTdtEOzuuXwMTw7/cWAX2ZeyN8W6WDl43xxtDdWwwWo=

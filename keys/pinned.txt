@@ -1,0 +1,2 @@
+# LABEL BASE64_ED25519_PUBKEY. DEV is a local test key: replace with release keys before the first public tag.
+DEV tTdtEOzuuXwMTw7/cWAX2ZeyN8W6WDl43xxtDdWwwWo=

@@ -1,0 +1,47 @@
+name: release
+# Runs only for pushes to main. Builds from source, then waits on the `release`
+# environment (requires a second maintainer's approval) before the signing key is exposed.
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --workspace --locked
+
+  build-pc:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release --locked --workspace
+      - uses: actions/upload-artifact@v4
+        with: { name: pc, path: target/release/*.dll, if-no-files-found: ignore }
+
+  # build-quest: aarch64-linux-android via cargo-ndk (phase 5)
+
+  publish:
+    needs: build-pc
+    runs-on: ubuntu-latest
+    environment: release          # protected: required reviewers, main only
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+      - name: Read version
+        id: v
+        run: echo "tag=v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - name: Refuse existing tag
+        run: "! git ls-remote --exit-code --tags origin ${{ steps.v.outputs.tag }}"
+      # TODO(phase 1): evr-sign writes manifest.json from the artifacts + docs/changelog,
+      # signs with EVR_SIGNING_KEY (environment secret), and outputs manifest.signed.json.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ steps.v.outputs.tag }}" --target "$GITHUB_SHA" --generate-notes pc/*

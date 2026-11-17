@@ -1,0 +1,18 @@
+[package]
+name = "evr-updater"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+evr-manifest = { path = "../evr-manifest" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+tempfile = "3"
+ed25519-dalek.workspace = true
+sha2.workspace = true
+base64.workspace = true

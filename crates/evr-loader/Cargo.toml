@@ -1,0 +1,22 @@
+[package]
+name = "evr-loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+# Built as hid.dll on Windows: echovr.exe imports HID.DLL directly and it is not a KnownDLL,
+# so the copy in the game folder loads first. Every export forwards to System32\hid.dll.
+name = "hid"
+crate-type = ["cdylib"]
+
+[dependencies]
+evr-manifest = { path = "../evr-manifest" }
+evr-updater = { path = "../evr-updater" }
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemServices", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Diagnostics_Debug", "Win32_System_Threading", "Win32_System_SystemInformation"] }
