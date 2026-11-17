@@ -1180,3 +1180,20 @@ All details are in H:\EVR\EVR-Runtime\HANDOFF.md. Nothing is committed.
   wait (no stuck 0). Queue tests updated + 3 new; pass. Note: token-keyed (Oculus) entries never get matches -> fallback.
 - 23:45 user: past 0 the estimate froze at 01:00 (lone player never matched). Atlas atlas.2347.exe (running): with no
   longer waits it counts down typical - (waited-typical) % typical, i.e. fresh cycles. Test extended; pass.
+
+### 2026-11-17 23:50 — committed, party build first run
+- All three repos committed on branch CatBranch (EVR-Runtime f6efb33 local only: no remote; atlas 8f461aa and
+  EchoRustServer 7c411ec pushed to origin/CatBranch).
+- Party runtime built in runtime/build-party (-DEVR_PARTY=ON, ignored by git) and INSTALLED (non-party backup:
+  evr-runtime.2349-nonparty.dll). Solo -mp launch to the lobby: no crash; "[EVR.PARTY] installed", "social object
+  handed to the game", "social object initialised (max users 10, callbacks set)". PARTY tab not yet opened.
+
+### 2026-11-17 23:59 — party build: lobby find fixed ("Matchmaker is unavailable")
+- Cause: the party table's S_MemberId gave the local member's Discord id; the lobby find sends it as its evr id and
+  Atlas closed the connection ("mismatched evr id", DMO-<discord> vs DMO-<login number>).
+- Fix (`src/party/party_pc.cpp` GameAccountNumber): own member id = the game's login account number, read like the
+  lobby does at 0x140180562: user = [[[lobby+0x910]]+0x28D0], then 0x140618690(user, &out) -> {platform, number}
+  (prologue checked; address via evr::ResolveVA — a raw VA failed the check). Logs
+  `[EVR.PARTY] own account: ... -> 7-<number>` when it changes.
+- Verified 23:58: social lobby joined, no mismatch in Atlas. Party build installed as evr-runtime.dll.
+- Next: tablet PARTY tab test (create, invite, accept, kick, leave; two clients for invite/accept).

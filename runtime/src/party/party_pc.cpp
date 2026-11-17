@@ -13,6 +13,7 @@
 //   - Party and member data are the game's CJson objects: loaded from Atlas's text, serialised to share ours.
 //   - Names and invites to friends go through Atlas RPCs on a worker thread (party/names, party/invite).
 #include "party/party.h"
+#include "earlyquit/lockout.h"
 
 #include <windows.h>
 
@@ -482,10 +483,59 @@ std::uint32_t S_MemberCount(void*) {
   return static_cast<std::uint32_t>(g_party.MemberCount());
 }
 
+// The game's own login account id: the lobby's [[+0x910]]+0x28D0 user object, read by 0x140618690 (the reader the
+// lobby uses for its own id at 0x140180582; it returns {platform, number}).
+std::uint64_t GameAccountNumber() {
+  auto read = [](const void* base, std::size_t off) -> std::uint64_t {
+    if (base == nullptr) return 0;
+    const auto* at = static_cast<const std::uint8_t*>(base) + off;
+    if (!evr::IsReadable(at, 8)) return 0;
+    std::uint64_t v;
+    std::memcpy(&v, at, 8);
+    return v;
+  };
+  using ReadId = std::uint64_t* (*)(void* user, std::uint64_t* out);
+  constexpr std::uintptr_t kReadIdVA = 0x140618690;
+  static const std::uint8_t kProlog[] = {0x48, 0x89, 0x5C, 0x24, 0x10, 0x57, 0x48, 0x83, 0xEC, 0x20};
+  static void* const fn = evr::ResolveVA(kReadIdVA);
+  static const bool ok = fn != nullptr && evr::IsReadable(fn, sizeof(kProlog)) &&
+                         std::memcmp(fn, kProlog, sizeof(kProlog)) == 0;
+  if (!ok) {
+    static bool said = false;
+    if (!said) Log(LogLevel::Warning, "[EVR.PARTY] own account reader 0x140618690 not found");
+    said = true;
+    return 0;
+  }
+  const auto lobby = read(evr_earlyquit::NetGame(), 0x40);
+  const auto session = read(reinterpret_cast<const void*>(lobby), 0x910);
+  const auto owner = read(reinterpret_cast<const void*>(session), 0);
+  const auto user = read(reinterpret_cast<const void*>(owner), 0x28D0);
+  std::uint64_t out[2] = {0, 0};
+  if (user != 0 && read(reinterpret_cast<const void*>(user), 0) != 0)
+    reinterpret_cast<ReadId>(fn)(reinterpret_cast<void*>(user), out);
+  static std::uint64_t lastLogged = ~0ull;
+  if (out[1] != lastLogged) {
+    lastLogged = out[1];
+    Log(LogLevel::Info, "[EVR.PARTY] own account: netgame=%p lobby=%llx session=%llx owner=%llx user=%llx -> %llu-%llu",
+        evr_earlyquit::NetGame(), (unsigned long long)lobby, (unsigned long long)session, (unsigned long long)owner,
+        (unsigned long long)user, (unsigned long long)out[0], (unsigned long long)out[1]);
+  }
+  return out[1];
+}
+
+// The local member's id is the one the game puts in its own requests (the lobby find's evr id): it must be the game's
+// login account number, not the Discord id the party protocol uses (Atlas closed the connection on a find with
+// "mismatched evr id" DMO-<discord id> vs DMO-<login number>, 2026-11-17 23:51). Other members keep their party ids.
 std::uint64_t* S_MemberId(void*, std::uint64_t* out, std::uint32_t index) {
   std::lock_guard<std::mutex> lock(g_mutex);
   EnsureSelf();
-  if (out != nullptr) *out = g_party.MemberIdAt(index);
+  if (out == nullptr) return out;
+  std::uint64_t id = g_party.MemberIdAt(index);
+  if (id != 0 && id == g_party.Self()) {
+    const std::uint64_t own = GameAccountNumber();
+    if (own != 0) id = own;
+  }
+  *out = id;
   return out;
 }
 
