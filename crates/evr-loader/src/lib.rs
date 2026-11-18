@@ -324,6 +324,14 @@ unsafe fn hook_entry() -> bool {
     true
 }
 
+/// The game's own executable names, lowercased. echovr.exe is the stock live build; echovr_openxr.exe is EchoXR's
+/// patched copy (it renames the game so its OpenXR runtime loads), and echoarena.exe / echocombat.exe are the
+/// classic-build names. A tool that loads hid.dll under any other name is left alone, so the loader never patches a
+/// process whose entry point is not the game's.
+fn is_game_exe(name: &str) -> bool {
+    matches!(name, "echovr.exe" | "echovr_openxr.exe" | "echoarena.exe" | "echocombat.exe")
+}
+
 #[no_mangle]
 extern "system" fn DllMain(h: HINSTANCE, reason: u32, _: *mut core::ffi::c_void) -> i32 {
     if reason == DLL_PROCESS_ATTACH {
@@ -331,12 +339,31 @@ extern "system" fn DllMain(h: HINSTANCE, reason: u32, _: *mut core::ffi::c_void)
             DisableThreadLibraryCalls(h);
             // Only patch the entry when loaded by the game itself (not a tool that loads hid.dll).
             let exe = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
-            if exe.as_deref() == Some("echovr.exe") {
+            if exe.as_deref().map(is_game_exe).unwrap_or(false) {
                 hook_entry();
             }
         }
     }
     1
+}
+
+#[cfg(test)]
+mod game_exe_tests {
+    use super::is_game_exe;
+
+    #[test]
+    fn matches_game_executables() {
+        for n in ["echovr.exe", "echovr_openxr.exe", "echoarena.exe", "echocombat.exe"] {
+            assert!(is_game_exe(n), "{n} should be a game exe");
+        }
+    }
+
+    #[test]
+    fn rejects_tools_and_launchers() {
+        for n in ["echoxr.exe", "echoxrhands.exe", "echoxrsettings.exe", "echoquest.exe", "notepad.exe", ""] {
+            assert!(!is_game_exe(n), "{n} should not be a game exe");
+        }
+    }
 }
 
 #[cfg(test)]
