@@ -46,9 +46,14 @@ add_executable(evr_tests
   tests/updates/test_updates.cpp
   tests/earlyquit/test_lockout_rules.cpp
   tests/menu/test_wording.cpp
-  tests/party/test_party_rules.cpp)
+  tests/party/test_party_rules.cpp
+  tests/content/test_content_sets.cpp)
 target_link_libraries(evr_tests PRIVATE evr_friends_logic GTest::gtest_main nlohmann_json::nlohmann_json)
 add_test(NAME evr_tests COMMAND evr_tests)
+
+# Dev tool: writes a one-texture package set (the UPDATE card, solid magenta) to test which mounted set wins.
+add_executable(evr_make_test_set tools/make_test_set.cpp)
+target_link_libraries(evr_make_test_set PRIVATE evr_friends_logic)
 
 # ---- PC runtime DLL ----
 FetchContent_Declare(minhook URL https://github.com/TsudaKageyu/minhook/archive/refs/tags/v1.3.3.tar.gz
@@ -77,16 +82,17 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/generated/cdn_pinned_keys.h
   "#pragma once\ninline constexpr const char* kCdnPinnedText = R\"KEYS(${EVR_CDN_PINNED})KEYS\";\n")
 
 add_library(evr_core STATIC src/core/core_pc.cpp src/core/resources_pc.cpp src/core/ui_text_pc.cpp src/core/frame_pc.cpp
-  src/core/events_pc.cpp src/core/actors_pc.cpp src/core/crashlog_pc.cpp)
+  src/core/events_pc.cpp src/core/actors_pc.cpp src/core/crashlog_pc.cpp src/core/packages_pc.cpp)
 target_include_directories(evr_core PUBLIC include)
 target_link_libraries(evr_core PUBLIC evr_minhook winhttp)
 
 add_library(evr_runtime SHARED src/runtime_main.cpp src/menu/create_join_pc.cpp src/menu/invite_pc.cpp
   src/friends/friends_install_pc.cpp src/friends/friends_panel_resources.cpp src/friends/friends_panel_pc.cpp
   src/friends/menu_friends_pack.cpp src/friends/menu_friends_profile.cpp src/friends/menu_friends_avatars.cpp
-  src/social/social_pc.cpp src/login/login_pc.cpp
+  src/social/social_pc.cpp src/login/login_pc.cpp src/login/provider_redirect_pc.cpp
   src/login/unlocks_probe_pc.cpp src/cdn/cdn_pc.cpp src/updates/updates_pc.cpp
-  src/earlyquit/lockout_pc.cpp src/menu/wording_pc.cpp src/menu/queue_pc.cpp)
+  src/earlyquit/lockout_pc.cpp src/menu/wording_pc.cpp src/menu/queue_pc.cpp
+  src/content/content_pc.cpp)
 # Parties have never run in the game: off by default, so the normal build is the one safe to install.
 option(EVR_PARTY "Build the party code (src/party) into the runtime DLL" OFF)
 if(EVR_PARTY)
@@ -103,6 +109,7 @@ if(MINGW)
   # Ship a self-contained DLL: no libstdc++/libgcc/winpthread DLLs next to the game.
   target_link_options(evr_runtime PRIVATE -static -static-libgcc -static-libstdc++)
   target_link_options(evr_tests PRIVATE -static)
+  target_link_options(evr_make_test_set PRIVATE -static)
 endif()
 
 # The evr_runtime login declaration's build and commit (git describe of this tree; "dev" outside git).

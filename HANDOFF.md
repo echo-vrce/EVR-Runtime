@@ -1,6 +1,6 @@
 # EVR-Runtime handoff
 
-Updated: 2026-11-17 21:45. This is the one handoff for the whole stack: **EVR-Runtime** (this repo), **atlas**
+Updated: 2026-11-18 01:20 (top section); older sections from 2026-11-17. This is the one handoff for the whole stack: **EVR-Runtime** (this repo), **atlas**
 (`J:\EchoVR-Tools-Launcher\atlas`, the Nakama fork) and **EchoRustServer** (`J:\EchoVR-Tools-Launcher\EchoRustServer`,
 the Rust game server and launcher). Nothing is committed in any of them; all work is in the working trees.
 
@@ -9,7 +9,71 @@ the Rust game server and launcher). Nothing is committed in any of them; all wor
 - Appendix A: the full atlas + EchoRustServer handoff (local test stack, atlas changes, Rust server, restarts,
   next steps). The same text also lives in `J:\EchoVR-Tools-Launcher\EchoRustServer\HANDOFF.md`.
 
-## 0. Whole stack: current state (2026-11-17 21:45) — read this first
+## Current state (2026-11-18 01:20) — read this first; section 0 below is older (21:45)
+
+**Running / installed**
+- Atlas: `HOWTOBUILD/local/atlas.exe` (= `atlas.2347.exe`), started 00:48 as a background process of the 2026-11-18
+  EVR-Runtime session (dies with it); log `logs/atlas.0050.stdout.log`. WSL Postgres/Redis and siteproxy (:4280) were
+  already up. Game servers / launcher: not started.
+- Dev update feed: `python -m http.server 8765 --directory H:/EVR/EVR-Runtime/dev/upload` (PID 19060). `dev/upload`
+  offers **0.9.1** (a test release; skipped in game at 01:07). Kept: `dev/upload.090` (the 0.9.0 test release) and
+  `dev/upload.080` (the original 0.8.0 feed: move it back to restore). Dev-only, never commit `dev/upload*`.
+- Game: `plugins\state.json` installed = **0.9.0** (installed through the in-game UPDATES panel at 00:50; last_good
+  0.8.0). `versions\0.9.0\evr-runtime.dll` = the 01:09 **non-party** build of `runtime/build` (shared tree: includes
+  the other session's `login/provider_redirect` and this session's content probe, off unless `"content_probe": true`).
+  Kept there: `evr-runtime.0110.dll` (the other session's 01:06 build), `evr-runtime.prev.dll` (the 00:50 party build
+  that the update installed). 0.8.0's DLL is the 23:58 party build (copy `evr-runtime.0048-party.dll`).
+- `versions\0.9.0\data` holds the **two-texture magenta test set** (below). `versions\0.8.0\data.content-test` is the
+  first test set, renamed so 0.8.0 is stock. `plugins\config.json` = pre-test content (no content_* keys).
+- Another session works in this repo and game folder at the same time: "Echo VR launch error"
+  (local_83f2378d-41c3-42e2-91b8-02e40e901684, cwd `H:\EVR`; `runtime/src/login/provider_redirect*`, login without
+  -noovr). It moved `plugins\dump.off` to `bin\win10\dump.off`. Coordinate before replacing DLLs.
+- User note: with `-mp` the game skips the update page. Launch update tests **without** `-mp`.
+
+**Done: shipping `_data` package sets with an update — WORKS ON SCREEN (user saw magenta, 01:17)**
+- `runtime/src/content/` (`content_sets.h` pure, `content_pc.cpp`): the version folder is the folder evr-runtime.dll
+  was loaded from; every `<version dir>\dataad15\win10\manifests\<16 hex>` set (packages `...\packages\<id>_<n>`) is
+  checked and mounted with AddPackage after the stock sets. Log: `[EVR.CONTENT] set 0x... added|NOT added`.
+- A set mounted after the stock sets **wins**: the game reads our copy of a (type, name) the stock data also has, and
+  builds the texture from it (probe: CGTextureResource deserialise, `texture_before=0 ... result=0`).
+- Safety net: each resource of a mounted set gets a transform that logs once `[EVR.CONTENT] content <type>/<name>
+  read: game got OUR copy (set wins) | ANOTHER copy (stock wins)` and in the second case serves ours.
+  `"content_override": false` only logs. `"content_mount": "before_stock"` (dev) mounts first; not tried.
+- The AddPackage hook moved into core (`include/evr/packages.h`, `src/core/packages_pc.cpp`); friends uses it too.
+- Release side: `evr-sign build` puts `pc/data/...` in the manifest as `data/rad15/win10/...`, `apply: relaunch`; the
+  updater writes them to `versions\<ver>\data\...` (test `package_set_lands_in_the_version_data_folder`). End to end
+  at 00:50 with the DEV key: offer 0.9.0 -> Update -> Restart now -> set mounted from `versions\0.9.0\data`.
+- Tests: runtime 90 pass + 11 canvas skips (7 new in `tests/content/`); evr-updater 7, evr-manifest 5.
+
+**Why the card first looked stock (found 01:15): the UPDATE card shows TWO textures**
+1. `ui_mnu_news` = `86300ac728482baf` (2048x1024 BC7, DXGI 99, 1 mip): the card's built-in default, shown first.
+2. `ui_mnu_news_latest` = `4bc2590a55dc5b9e` (2048x1024 BC1 sRGB, DXGI 72, 12 mips, payload 1,398,268 B): named by
+   Atlas's `main_menu` config (`news.sentiment.texture`, config type 0x1509EE27440E1D7B, game log `[CONFIGS]
+   ConfigSuccessCB`), loaded by the game's DynLoadTexture ~1 s later and swapped onto the card. Same art.
+   Replacing only (1) gave "magenta, then stock"; replacing both stays magenta.
+- **Simpler route for server-side UPDATE art:** ship the picture as a NEW texture name in a release's set (or the
+  CDN), and have Atlas's main_menu config name it in `news.sentiment.texture`. No stock texture is overridden. Atlas
+  serves that config (atlas session's area). The AtlasCDN texture path is the same resource hook and should work too.
+- Engine facts found: CGTextureResource RTTI type descriptor 0x142063400, COL 0x141e5fa68, vtable 0x141c2ff48;
+  deserialise = vtable+0x38 = 0x1405491c0 (skips when `[resource+0x78]`, its texture, is already set), called from
+  0x140fa261f (the resource job 0x140fa2510, queued by AsyncResourceIOCallback). The renderer is **D3D12**
+  (`d3d12.dll` delay-imported by ordinal), not D3D11.
+- Dev tool: `runtime/build/evr_make_test_set.exe <data root> [<name hex>=<payload.dds> ...]` (set `evr_content_test`
+  = `54b96321fb9b6ed8`). The current 0.9.0 test set was made from two magenta payloads in the stock formats, built in
+  the session scratchpad from the dump's DDS headers (game-derived: never commit or ship them).
+
+**Next**
+1. Rollback check: from 0.9.0 back to 0.8.0 (no set) and see the stock card. No in-game rollback button: set
+   `installed` to 0.8.0 in `plugins\state.json` with the game closed (dev mode turns boot-failure counting off).
+2. Atlas: let the main_menu config's `news.sentiment.texture` be set (per release / admin), for the UPDATE art.
+3. `Serve` larger than the stock buffer leaks the stock buffer once (resources_pc.cpp); fine for menu art.
+4. Quest: not done (content module is PC only; Quest data dir is `rad15\android`).
+5. Nothing committed (the user commits). New: `runtime/include/evr/packages.h`, `runtime/src/core/packages_pc.cpp`,
+   `runtime/src/content/*`, `runtime/tests/content/*`, `runtime/tools/make_test_set.cpp`; changed: CMakeLists,
+   runtime_main.cpp, friends_install_pc.cpp, `crates/evr-updater/src/tests.rs`. The `login/provider_redirect*` files
+   and their CMakeLists/runtime_main lines are the other session's.
+
+## 0. Whole stack: current state (2026-11-17 21:45)
 
 **Running**
 - Atlas: `HOWTOBUILD/local/atlas.exe` = `atlas.2130.exe` (PID 16176 since 21:22). Older builds kept as `atlas.2059.exe`,
@@ -1250,7 +1314,7 @@ UPDATES card/panel in game (user confirmed). Tested with manifests signed locall
   whatever the package order, as the CDN path does. Do not replace the stock manifest files in `_data`: an extra set
   plus an override keeps stock intact and rollback safe.
 
-### NEXT AGENT TASK: ship `_data` package sets with an update (added 2026-11-18, not started)
+### NEXT AGENT TASK: ship `_data` package sets with an update (added 2026-11-18; DONE 01:20, works on screen: see "Current state" at the top)
 
 Goal (user): a release can carry a new package set (manifest + package file) next to `evr-runtime.dll`; after Restart
 now the game loads it, and where it holds a resource the stock data also has, ours is the one the game uses.

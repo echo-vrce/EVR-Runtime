@@ -14,6 +14,11 @@ fn keys() -> &'static [PinnedKey] {
 }
 
 fn env(v: Version) -> Vec<u8> {
+    env_files(v, &[("evr-runtime.dll", BODY)])
+}
+
+/// A signed release of `files` (path, bytes), every one applied on relaunch.
+fn env_files(v: Version, files: &[(&str, &[u8])]) -> Vec<u8> {
     use sha2::Digest;
     let m = Manifest {
         schema: 1,
@@ -25,13 +30,16 @@ fn env(v: Version) -> Vec<u8> {
         builds: vec![PlatformBuild {
             platform: Platform::current(),
             loader_abi: LOADER_ABI,
-            files: vec![FileEntry {
-                path: "evr-runtime.dll".into(),
-                url: "mem://".into(),
-                sha256: evr_manifest::hex(&sha2::Sha256::digest(BODY)),
-                size: BODY.len() as u64,
-                apply: Apply::Relaunch,
-            }],
+            files: files
+                .iter()
+                .map(|(path, bytes)| FileEntry {
+                    path: (*path).into(),
+                    url: "mem://".into(),
+                    sha256: evr_manifest::hex(&sha2::Sha256::digest(bytes)),
+                    size: bytes.len() as u64,
+                    apply: Apply::Relaunch,
+                })
+                .collect(),
         }],
     };
     let s = serde_json::to_string(&m).unwrap();
@@ -143,4 +151,28 @@ fn session_up_to_date_and_errors_offer_nothing() {
     s.set_checked(Err(Error::Net("offline".into())));
     assert_eq!(s.status().state, Phase::None);
     assert!(s.begin().is_none());
+}
+
+#[test]
+fn package_set_lands_in_the_version_data_folder() {
+    // A release's own package set (runtime content/): dataad15\win10\{manifests,packages} under the version folder.
+    const MANIFEST: &[u8] = b"manifest-bytes";
+    const PACKAGE: &[u8] = b"package-bytes";
+    let files: [(&str, &[u8]); 3] = [
+        ("evr-runtime.dll", BODY),
+        ("data/rad15/win10/manifests/54b96321fb9b6ed8", MANIFEST),
+        ("data/rad15/win10/packages/54b96321fb9b6ed8_0", PACKAGE),
+    ];
+    let d = tempfile::tempdir().unwrap();
+    let u = up(d.path());
+    let o = match u.decide(env_files(Version(1, 0, 0), &files), 0).unwrap() {
+        Decision::Prompt(o) => o,
+        _ => panic!("expected prompt"),
+    };
+    assert!(o.needs_relaunch());
+    u.stage_with(&o, &mut |_, _| {}, |f| Ok(files.iter().find(|x| x.0 == f.path).unwrap().1.to_vec())).unwrap();
+    u.boot().unwrap();
+    let dir = u.active_dir().unwrap();
+    assert_eq!(fs::read(dir.join("data/rad15/win10/manifests/54b96321fb9b6ed8")).unwrap(), MANIFEST);
+    assert_eq!(fs::read(dir.join("data/rad15/win10/packages/54b96321fb9b6ed8_0")).unwrap(), PACKAGE);
 }

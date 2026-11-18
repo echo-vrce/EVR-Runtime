@@ -16,10 +16,12 @@
 #include "evr/symbol.h"
 #include "evr/ui_text.h"
 #include "cdn/cdn.h"
+#include "content/content.h"
 #include "earlyquit/lockout.h"
 #include "menu/wording.h"
 #include "friends/friends_install.h"
 #include "login/login.h"
+#include "login/provider_redirect.h"
 #include "login/unlocks_probe.h"
 #include "menu/create_join.h"
 #include "menu/invite.h"
@@ -89,6 +91,20 @@ int QueueEstimateScaleSetting() {
   }
 }
 
+// plugins\config.json "content_mount": "before_stock" mounts the release's sets before the stock ones (dev
+// experiment; default after), "content_override": false only logs which copy the game read (default: serve ours).
+evr_content::Options ContentSettings() {
+  evr_content::Options o;
+  try {
+    const nlohmann::json c = ReadConfig();
+    o.before_stock = c.value("content_mount", std::string("after_stock")) == "before_stock";
+    o.override_stock = c.value("content_override", true);
+    o.probe = c.value("content_probe", false);
+  } catch (const nlohmann::json::exception&) {
+  }
+  return o;
+}
+
 }  // namespace
 
 extern "C" __declspec(dllexport) int EvrRuntimeStart(const char* version) {
@@ -106,6 +122,7 @@ extern "C" __declspec(dllexport) int EvrRuntimeStart(const char* version) {
 #endif
   evr::InstallFrameHook();
   evr_friends::Install();  // registers its frame and event callbacks
+  evr_content::Install(ContentSettings());  // the release's own package sets (after friends: same AddPackage hook)
   evr_create_join::Install();
   const int logEvents = LogEventsSetting();
   evr_updates::Install();  // after the friends panel: its level edits run first
@@ -113,6 +130,7 @@ extern "C" __declspec(dllexport) int EvrRuntimeStart(const char* version) {
   evr::InstallEventHook();
   evr::InstallActorHooks(logEvents);
   evr_invite::Install(logEvents > 0);
+  evr_provider::Install();  // pnsovr -> pnsdemo, so login works without -noovr (no Oculus prerequisites)
   evr_login::Install(version);
   if (logEvents > 0) evr_unlocks_probe::Install();
   evr_cdn::Start();
