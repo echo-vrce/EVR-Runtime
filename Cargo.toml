@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/evr-manifest", "crates/evr-updater", "crates/evr-sign", "crates/evr-loader"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.10.0"
 edition = "2021"
 license = "Apache-2.0"
 
