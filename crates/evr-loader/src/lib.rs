@@ -17,7 +17,7 @@
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use evr_manifest::PinnedKey;
-use evr_updater::{Config, Decision, Session, Updater};
+use evr_updater::{channel, Config, Decision, Session, Updater};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -34,11 +34,13 @@ mod pinned {
     include!(concat!(env!("OUT_DIR"), "/pinned.rs"));
 }
 
-const DEFAULT_FEED: &str = "https://github.com/heisthecat31/EVR-Runtime/releases/latest/download/manifest.signed.json";
+/// Stable releases (built from the GitHub branch `Main`). Beta testers get their feed from Atlas (see `resolve_channel`).
+const DEFAULT_FEED: &str = "https://github.com/echo-vrce/EVR-Runtime/releases/latest/download/manifest.signed.json";
 
 #[derive(serde::Deserialize, Default)]
 #[serde(default)]
 struct LocalConfig {
+    /// Dev override: with `feed` or `channel` set, Atlas is not asked for the channel.
     feed: Option<String>,
     channel: Option<String>,
     /// Set to true to treat a skipped update as new (the panel opens by itself again).
@@ -93,13 +95,41 @@ fn relaunch() {
     }
 }
 
+/// The (feed, channel) Atlas gave this boot; unset until the worker has asked.
+static RESOLVED: OnceLock<(String, String)> = OnceLock::new();
+
 fn updater(lc: &LocalConfig) -> Updater {
-    Updater::new(Config {
-        root: root(),
-        feed: lc.feed.clone().unwrap_or_else(|| DEFAULT_FEED.into()),
-        channel: lc.channel.clone().unwrap_or_else(|| "stable".into()),
-        keys: keys(),
-    })
+    let (feed, channel) = match (&lc.feed, &lc.channel, RESOLVED.get()) {
+        (None, None, Some((f, c))) => (f.clone(), c.clone()),
+        _ => (
+            lc.feed.clone().unwrap_or_else(|| DEFAULT_FEED.into()),
+            lc.channel.clone().unwrap_or_else(|| "stable".into()),
+        ),
+    };
+    Updater::new(Config { root: root(), feed, channel, keys: keys() })
+}
+
+/// Worker thread, before the feed check: asks Atlas whether this player is a beta tester (`/beta` in Discord) and
+/// remembers the beta feed if so. Skipped when `plugins\config.json` sets `feed` or `channel` (dev override).
+/// Anything going wrong means stable.
+fn resolve_channel(lc: &LocalConfig) {
+    if lc.feed.is_some() || lc.channel.is_some() {
+        log("channel: feed/channel set in config.json, Atlas not asked");
+        return;
+    }
+    let path = game_dir().join("..").join("..").join("_local").join("config.json");
+    let Some(login) = std::fs::read(&path).ok().and_then(|b| channel::parse_game_config(&b)) else {
+        log("channel: stable (no Atlas login in _local\\config.json)");
+        return;
+    };
+    match channel::ask_atlas(&login) {
+        Ok(channel::Channel::Beta { feed }) => {
+            log(&format!("channel: beta (Atlas) feed {feed}"));
+            let _ = RESOLVED.set((feed, "beta".into()));
+        }
+        Ok(channel::Channel::Stable) => log("channel: stable (Atlas)"),
+        Err(e) => log(&format!("channel: stable (could not ask Atlas: {e})")),
+    }
 }
 
 fn local_config() -> LocalConfig {
@@ -192,6 +222,7 @@ fn session() -> &'static Session {
 /// Worker thread: check the feed once and hand the result to the session the runtime reads.
 fn run() {
     let lc = local_config();
+    resolve_channel(&lc);
     let u = updater(&lc);
     let r = match u.check() {
         Ok(Decision::Skipped(o)) if lc.show_skipped => Ok(Decision::Prompt(o)),

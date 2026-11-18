@@ -1,6 +1,6 @@
 # EVR-Runtime handoff
 
-Updated: 2026-11-18 01:20 (top section); older sections from 2026-11-17. This is the one handoff for the whole stack: **EVR-Runtime** (this repo), **atlas**
+Updated: 2026-11-18 01:40 (top section); older sections from 2026-11-17. This is the one handoff for the whole stack: **EVR-Runtime** (this repo), **atlas**
 (`J:\EchoVR-Tools-Launcher\atlas`, the Nakama fork) and **EchoRustServer** (`J:\EchoVR-Tools-Launcher\EchoRustServer`,
 the Rust game server and launcher). Nothing is committed in any of them; all work is in the working trees.
 
@@ -9,7 +9,42 @@ the Rust game server and launcher). Nothing is committed in any of them; all wor
 - Appendix A: the full atlas + EchoRustServer handoff (local test stack, atlas changes, Rust server, restarts,
   next steps). The same text also lives in `J:\EchoVR-Tools-Launcher\EchoRustServer\HANDOFF.md`.
 
-## Current state (2026-11-18 01:20) — read this first; section 0 below is older (21:45)
+## 2026-11-18: release channels — Main = stable, DevTest = beta (built and unit-tested; not tried end to end)
+
+User decisions: the GitHub default branch stays **`Main`** (capital M). A second branch **`DevTest`** carries beta builds.
+Only players a global operator puts in with Atlas's Discord command `/beta` get them.
+- `.github/workflows/release.yml`: runs on pushes to `[Main, DevTest]`. Main -> channel `stable`, release
+  `v<ver>`, marked latest, environment `release`. DevTest -> channel `beta`, prerelease `v<ver>-beta`, environment
+  `beta`, and its `manifest.signed.json` is copied (`--clobber`) to the rolling prerelease **`devtest`**. The publish
+  job now signs with `evr-sign build --label RELEASE` (key: secret `EVR_SIGNING_KEY` on each environment). Next-steps
+  items 1 and 2 below (branch name, pipeline gaps 1-4) are done by this section.
+- Loader (`crates/evr-loader`): `DEFAULT_FEED` fixed to `echo-vrce/EVR-Runtime`. Before the feed check the worker
+  calls `resolve_channel`: reads `..\..\_local\config.json` (apiservice_host + discordid/password, like the runtime),
+  `POST /evr/runtime/token`, then `GET /evr/runtime/channel`; beta -> uses Atlas's feed with channel `beta`, anything
+  else (no config, Atlas down, old Atlas) -> stable. `plugins\config.json` `feed`/`channel` still override (Atlas not
+  asked). Log lines `channel: ...` in `plugins\evr-loader.log`. Pure parts in `crates/evr-updater/src/channel.rs`
+  (3 tests; workspace tests all pass).
+- Atlas (`J:\EchoVR-Tools-Launcher\atlas`, uncommitted): new system group **"Global Beta Testers"** (created at
+  start with the core groups); `GET /evr/runtime/channel` (`server/evr_runtime_channel_http.go`, 3 tests), beta feed
+  from runtime env `EVR_BETA_FEED` (default `.../releases/download/devtest/manifest.signed.json`); Discord
+  `/beta action:add|remove|list player:<...>` (`server/evr_discord_appbot_beta.go`, global operators only, audit
+  logged, player autocomplete shared with /lockout). Not rebuilt into `HOWTOBUILD/local/atlas.exe` and not tried.
+- The repo is now **public** (user, 2026-11-18): Actions are free and players can download release assets.
+- CI now builds everything: job `build-runtime` (MSYS2 MINGW64 GCC, CMake "MinGW Makefiles", Release, party OFF,
+  `ctest`) uploads `evr-runtime.dll`; `build-pc` builds `hid.dll` with `EVR_RELEASE_BUILD=1`, which makes
+  `crates/evr-loader/build.rs` leave the DEV key out (local builds keep DEV). `publish` signs with label RELEASE and
+  fails if the runtime or the secret is missing. Every push to Main/DevTest needs a new `version` in Cargo.toml
+  (the tag check refuses a repeat). Not run on GitHub yet.
+- Release key generated 2026-11-18: public half pinned as `RELEASE` in `keys/pinned.txt`; secret half in
+  `H:\EVR\release-key\release.key` (outside the repo, never commit). The user pastes it as `EVR_SIGNING_KEY` into
+  the `release` and `beta` environments, keeps an offline copy, then deletes the file.
+- Two-person lock (GitHub settings, user does them): ruleset on Main (PR required, 2 approvals, dismiss stale,
+  last-push approval, no force push, no bypass), DevTest similar with 1; `release` environment with required
+  reviewers + "Prevent self-review", deployment branch Main only; `beta` environment, branch DevTest only.
+- Still to do: create the `DevTest` branch; a removed beta tester stays on the beta version until a newer stable one ships (no
+  downgrade). Beta release assets are public on GitHub (prerelease): the gate is who the loader offers them to.
+
+## Current state (2026-11-18 01:40) — read this first; section 0 below is older (21:45)
 
 **Running / installed**
 - Atlas: `HOWTOBUILD/local/atlas.exe` (= `atlas.2347.exe`), started 00:48 as a background process of the 2026-11-18
@@ -62,16 +97,36 @@ the Rust game server and launcher). Nothing is committed in any of them; all wor
   = `54b96321fb9b6ed8`). The current 0.9.0 test set was made from two magenta payloads in the stock formats, built in
   the session scratchpad from the dump's DDS headers (game-derived: never commit or ship them).
 
-**Next**
-1. Rollback check: from 0.9.0 back to 0.8.0 (no set) and see the stock card. No in-game rollback button: set
+**Git (2026-11-18 01:40)**
+- Committed and on GitHub: `8f6d713` (loader: game exe names, another agent's work) and `9a5f7bb` (release package
+  sets, shared AddPackage hook, login without -noovr via `login/provider_redirect`, another agent's). Uncommitted on
+  purpose: `dev/upload.080/`, `dev/upload.090/` (dev feed copies).
+- The user renamed the GitHub branch `CatBranch` -> **`Main` (capital M)**; it is the default branch. Local branch is
+  `main`, tracking `origin/Main`. Older mentions of `CatBranch` below are history.
+- EchoRustServer has another agent's uncommitted combat work on its `main` (gear.rs, session.rs, agent.md; 123 tests
+  pass). The user said not to commit it from this repo's work; leave it to that repo's session.
+
+**Next steps (in order)**
+1. **Branch name vs the release workflow.** `.github/workflows/release.yml` runs on `push: branches: [main]`; GitHub
+   matches branch filters case-sensitively, so pushes to `Main` never start it. Either rename the GitHub branch to
+   lowercase `main` (Settings -> Branches, or the branch's "Rename"), or change the filter to `[Main]`. Ask the user
+   which; lowercase is the usual choice and matches the local branch.
+2. **Release pipeline gaps** (section "2026-11-18 — Release pipeline", items 1-5): build `evr-runtime.dll` (CMake +
+   MinGW) and run `ctest` in CI; sign in `publish` with the release key from the `release` environment; fix
+   `DEFAULT_FEED` (`heisthecat31/EVR-Runtime` -> `echo-vrce/EVR-Runtime`) in `crates/evr-loader/src/lib.rs`; generate
+   and pin the release key (drop DEV from release loaders); branch protection and required reviewers on GitHub.
+   Releases can now carry `pc/data/rad15/win10/...` package sets (no workflow change needed: evr-sign takes the tree).
+3. **UPDATE art from the server:** Atlas's `main_menu` config (`news.sentiment.texture`) picks the card's second
+   texture. Ship the art as a NEW texture name in a release set (or AtlasCDN) and have Atlas send that name; no stock
+   override. Atlas side belongs to the atlas session.
+4. **Rollback check:** from 0.9.0 back to 0.8.0 (no set) and see the stock card. No in-game rollback button: set
    `installed` to 0.8.0 in `plugins\state.json` with the game closed (dev mode turns boot-failure counting off).
-2. Atlas: let the main_menu config's `news.sentiment.texture` be set (per release / admin), for the UPDATE art.
-3. `Serve` larger than the stock buffer leaks the stock buffer once (resources_pc.cpp); fine for menu art.
-4. Quest: not done (content module is PC only; Quest data dir is `rad15\android`).
-5. Nothing committed (the user commits). New: `runtime/include/evr/packages.h`, `runtime/src/core/packages_pc.cpp`,
-   `runtime/src/content/*`, `runtime/tests/content/*`, `runtime/tools/make_test_set.cpp`; changed: CMakeLists,
-   runtime_main.cpp, friends_install_pc.cpp, `crates/evr-updater/src/tests.rs`. The `login/provider_redirect*` files
-   and their CMakeLists/runtime_main lines are the other session's.
+5. **Restore the dev test state when done:** remove the magenta test set from `versions\0.9.0\data` (or roll back),
+   move `dev/upload.080` back to `dev/upload` for the original 0.8.0 feed.
+6. `Serve` larger than the stock buffer leaks the stock buffer once (resources_pc.cpp); fine for menu art.
+7. Quest: the content module is PC only (Quest data dir is `rad15\android`).
+8. Older open items still stand: the "Next" list under "Where we are now" (JOIN VIA CODE typed code, refusal texts,
+   region/mode mapping, ...) and the party tab test with two clients ("Parties on PC").
 
 ## 0. Whole stack: current state (2026-11-17 21:45)
 
