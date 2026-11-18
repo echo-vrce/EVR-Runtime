@@ -1197,3 +1197,55 @@ All details are in H:\EVR\EVR-Runtime\HANDOFF.md. Nothing is committed.
   `[EVR.PARTY] own account: ... -> 7-<number>` when it changes.
 - Verified 23:58: social lobby joined, no mismatch in Atlas. Party build installed as evr-runtime.dll.
 - Next: tablet PARTY tab test (create, invite, accept, kick, leave; two clients for invite/accept).
+
+### 2026-11-18 — Release pipeline: status, gaps, and how to test it
+
+**Works today (local, DEV key):** offer, download, verify, stage, Restart now, rollback after 2 failed boots, and the
+UPDATES card/panel in game (user confirmed). Tested with manifests signed locally by `evr-sign build` into
+`dev\upload`, never with a GitHub release. AtlasCDN client: built and unit-tested (4), never tried in game.
+
+**Gaps before "PR to main + approvals -> players get it":**
+1. `.github/workflows/release.yml` builds only the cargo workspace (`hid.dll`). `evr-runtime.dll` (CMake + MinGW,
+   TDM-GCC 10.3) is not built in CI. Needs a MinGW toolchain step on `windows-latest` and `cmake --build`, plus
+   `ctest` in the test job.
+2. Signing is a TODO in `publish`: `evr-sign build --key $EVR_SIGNING_KEY --label <L> --version <v> --channel stable
+   --dir <release dir> --base-url https://github.com/echo-vrce/EVR-Runtime/releases/download/<tag> ...` must write
+   `manifest.signed.json` and the flat assets, and the release must upload them. The key comes from the `release`
+   environment secret only.
+3. `DEFAULT_FEED` in `crates/evr-loader/src/lib.rs` points at `heisthecat31/EVR-Runtime`; the repo is now
+   `echo-vrce/EVR-Runtime`. A loader built with the wrong feed never sees a release (players can override with
+   `plugins\config.json` `"feed"`).
+4. `keys/pinned.txt` holds only DEV. Generate the release key (`evr-sign keygen`), pin it, keep the secret only in the
+   environment. Pinned keys are compiled into `hid.dll`, so the loader players install must be built after this.
+   Decide whether DEV stays pinned in release loaders (it should not).
+5. GitHub settings, not in the repo: branch protection on `main` (2 approving reviews, CODEOWNERS, no force push, admins
+   included) and required reviewers on the `release` environment. Not checked yet.
+6. The workflow runs on pushes to `main` only; current work is on `CatBranch`. Version and tag come from the workspace
+   `Cargo.toml` `version`; the publish job refuses an existing tag.
+
+**Test plan for the pipeline (once 1-5 are done):**
+1. Fork or test repo first: same workflow, a throwaway release key, a loader built with that feed and key.
+2. Bump the version, open a PR, get the approvals, merge. Check: CI tests pass, the publish job waits for the
+   environment approval, the release has `manifest.signed.json`, `evr-runtime.dll` and any `_data` files.
+3. On a PC with the previous version installed: the UPDATES panel offers it, Update downloads and verifies, Restart now
+   runs the new version (`evr-runtime.log` shows it), `plugins\state.json` shows the new `installed` and `last_good`
+   after the menu loads.
+4. Negative checks: a manifest signed by an unpinned key is refused; a file whose sha256 differs is refused; a
+   version that crashes before the menu twice rolls back and is never offered again; Skip hides it until a newer one.
+
+### Shipping new `_data` packages with an update (answer, 2026-11-18)
+
+- **Shipping the files: yes, already.** A release manifest can carry any files; the updater writes them under
+  `plugins\versions\<ver>\` (paths checked by `evr_manifest::check_path`: relative only, no `..`, cannot leave that
+  folder). Stock `_data` is never written, which keeps rollback clean.
+- **Making the game load them: needs the runtime, and a restart.** The engine opens package sets once at boot, so a new
+  package always needs Restart now (the panel already does that). The game only knows the sets it mounts itself; the
+  runtime adds more with `CResourceManager::AddPackage` (0x140FA1680), as the FRIENDS panel already does for its own
+  set (`rad15\win10\manifests\<set>` + `rad15\win10\packages\<set>_0` under a data root, mounted after the last stock
+  AddPackage, result 0). To do: a generic step that mounts every package set the active release lists (e.g.
+  `<version dir>\data\rad15\win10\...`), instead of the friends set only.
+- **Replacing a stock resource: not proven.** Which set wins when two mounted sets hold the same (type, name) has not
+  been tested. Two routes: (a) test the order once (mount a set with a changed copy of a known texture, see which one
+  shows); (b) the runtime's resource hook on `AsyncResourceIOCallback` (0x140FA16D0) already overrides by (type, name)
+  whatever the package order, as the CDN path does. Do not replace the stock manifest files in `_data`: an extra set
+  plus an override keeps stock intact and rollback safe.
