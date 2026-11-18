@@ -38,7 +38,7 @@ fn main() {
             def += &format!("    {n}=C:\\Windows\\System32\\hid.{n}\n");
         }
         // The runtime's interface (src/lib.rs): the UPDATES card and panel drive the update through these.
-        for n in ["EvrUpdateStatus", "EvrUpdateStart", "EvrUpdateSkip", "EvrUpdateRelaunch", "EvrUpdateBootOk"] {
+        for n in ["EvrUpdateStatus", "EvrUpdateChannel", "EvrUpdateStart", "EvrUpdateSkip", "EvrUpdateRelaunch", "EvrUpdateBootOk"] {
             def += &format!("    {n}
 ");
         }

@@ -50,7 +50,8 @@ jobs:
           update: true
           install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make
       - run: gcc --version | head -1
-      - run: cmake -S runtime -B runtime/build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DEVR_PARTY=OFF
+      # Parties (src/party) are untested in game: built into beta (DevTest) only, never into stable (Main).
+      - run: cmake -S runtime -B runtime/build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DEVR_PARTY=${{ github.ref_name == 'DevTest' && 'ON' || 'OFF' }}
       - run: cmake --build runtime/build -j 4
       - run: ctest --test-dir runtime/build --output-on-failure
       - uses: actions/upload-artifact@v4

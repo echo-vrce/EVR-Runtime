@@ -97,6 +97,8 @@ fn relaunch() {
 
 /// The (feed, channel) Atlas gave this boot; unset until the worker has asked.
 static RESOLVED: OnceLock<(String, String)> = OnceLock::new();
+/// The channel this boot's feed check uses, once decided (`EvrUpdateChannel`).
+static CHANNEL: OnceLock<String> = OnceLock::new();
 
 fn updater(lc: &LocalConfig) -> Updater {
     let (feed, channel) = match (&lc.feed, &lc.channel, RESOLVED.get()) {
@@ -224,6 +226,7 @@ fn run() {
     let lc = local_config();
     resolve_channel(&lc);
     let u = updater(&lc);
+    let _ = CHANNEL.set(u.cfg.channel.clone());
     let r = match u.check() {
         Ok(Decision::Skipped(o)) if lc.show_skipped => Ok(Decision::Prompt(o)),
         r => r,
@@ -249,6 +252,17 @@ pub extern "C" fn EvrUpdateStatus(buf: *mut u8, cap: usize) -> usize {
         unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buf, json.len()) };
     }
     json.len()
+}
+
+/// Writes this boot's update channel ("stable" / "beta"; UTF-8, no NUL) into `buf` when it fits and returns its
+/// length either way; 0 while the worker has not decided yet (it asks Atlas first).
+#[no_mangle]
+pub extern "C" fn EvrUpdateChannel(buf: *mut u8, cap: usize) -> usize {
+    let Some(c) = CHANNEL.get() else { return 0 };
+    if !buf.is_null() && c.len() <= cap {
+        unsafe { std::ptr::copy_nonoverlapping(c.as_ptr(), buf, c.len()) };
+    }
+    c.len()
 }
 
 /// Download, verify and stage the offer (blocks until done; call it from a worker thread). 0 started, 1 nothing to do.

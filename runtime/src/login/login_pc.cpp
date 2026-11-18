@@ -10,6 +10,8 @@
 #include <cstring>
 #include <string>
 
+#include <windows.h>
+
 #include <nlohmann/json.hpp>
 
 #include "evr/core.h"
@@ -59,6 +61,17 @@ std::string ChannelSetting() {
   return "stable";
 }
 
+// The loader's channel for this boot (it asks Atlas: "beta" for /beta testers), else plugins\config.json's.
+std::string LoaderChannel() {
+  using ChannelFn = std::size_t (*)(char*, std::size_t);
+  HMODULE h = GetModuleHandleA((evr::GameDir() + "\hid.dll").c_str());
+  auto fn = h != nullptr ? reinterpret_cast<ChannelFn>(GetProcAddress(h, "EvrUpdateChannel")) : nullptr;
+  if (fn == nullptr) return g_channel;
+  char buf[32] = {};
+  const std::size_t n = fn(buf, sizeof(buf));
+  return n > 0 && n < sizeof(buf) ? std::string(buf, n) : g_channel;
+}
+
 void Declare(void* json) {
   if (!Matches(kSetStringVA, kSetterPrologue) || !Matches(kSetIntVA, kSetterPrologue)) {
     evr::Log(evr::LogLevel::Warning, "[EVR.LOGIN] evr_runtime not declared: game build differs");
@@ -70,13 +83,14 @@ void Declare(void* json) {
   setString(json, "evr_runtime|build", EVR_BUILD);
   setString(json, "evr_runtime|commit", EVR_COMMIT);
   setString(json, "evr_runtime|platform", "pc");
-  setString(json, "evr_runtime|channel", g_channel.c_str());
+  const std::string channel = LoaderChannel();
+  setString(json, "evr_runtime|channel", channel.c_str());
   // Social level 1 would also bring Atlas's SNS friend-presence and recently-met pushes, which nothing here handles.
   // Parties (party/) need no level: Atlas sends party data to a client once it has sent an SNS party request
   // (SessionParameters.ReadsPartyData).
   setInt(json, "evr_runtime|social", 0);
   evr::Log(evr::LogLevel::Info, "[EVR.LOGIN] declared evr_runtime version=%s build=%s channel=%s platform=pc social=0",
-           g_version.c_str(), EVR_BUILD, g_channel.c_str());
+           g_version.c_str(), EVR_BUILD, channel.c_str());
 }
 
 std::uint64_t SendHook(void* service, void* json) {
