@@ -1,9 +1,16 @@
 name: release
-# Runs only for pushes to main. Builds from source, then waits on the `release`
-# environment (requires a second maintainer's approval) before the signing key is exposed.
+# Two branches, two update channels:
+#   Main    -> channel "stable": release v<version>, marked latest. Every player's loader reads
+#              releases/latest/download/manifest.signed.json.
+#   DevTest -> channel "beta": prerelease v<version>-beta, and its manifest is copied to the rolling prerelease
+#              "devtest". Only players a global operator added with Atlas's Discord command /beta get that feed
+#              (Atlas answers GET /evr/runtime/channel with it); everyone else never sees beta builds.
+# A beta manifest is signed for channel "beta", so a stable loader refuses it, and the other way round.
+# Build from source, then wait on the channel's environment (`release` for Main, `beta` for DevTest; set required
+# reviewers on them in GitHub) before the signing key (secret EVR_SIGNING_KEY) is exposed.
 on:
   push:
-    branches: [main]
+    branches: [Main, DevTest]
 permissions:
   contents: read
 
@@ -17,31 +24,93 @@ jobs:
   build-pc:
     needs: test
     runs-on: windows-latest
+    env:
+      EVR_RELEASE_BUILD: "1"   # the players' hid.dll pins only the RELEASE key (crates/evr-loader/build.rs)
     steps:
       - uses: actions/checkout@v4
       - run: cargo build --release --locked --workspace
       - uses: actions/upload-artifact@v4
-        with: { name: pc, path: target/release/*.dll, if-no-files-found: ignore }
+        with: { name: pc, path: target/release/hid.dll }
+      - uses: actions/upload-artifact@v4
+        with: { name: tools, path: target/release/evr-sign.exe }
+
+  # The C++ runtime (evr-runtime.dll): CMake + MinGW GCC from MSYS2, static, then its unit tests.
+  # Local builds use TDM-GCC 10.3; CI uses MSYS2's current mingw-w64 GCC, and the tests run on that build.
+  build-runtime:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # git describe for the login declaration's build/commit
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make
+      - run: gcc --version | head -1
+      # Parties (src/party) are untested in game: built into beta (DevTest) only, never into stable (Main).
+      - run: cmake -S runtime -B runtime/build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DEVR_PARTY=${{ github.ref_name == 'DevTest' && 'ON' || 'OFF' }}
+      - run: cmake --build runtime/build -j 4
+      - run: ctest --test-dir runtime/build --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with: { name: runtime, path: runtime/build/evr-runtime.dll, if-no-files-found: error }
 
   # build-quest: aarch64-linux-android via cargo-ndk (phase 5)
 
   publish:
-    needs: build-pc
-    runs-on: ubuntu-latest
-    environment: release          # protected: required reviewers, main only
+    needs: [build-pc, build-runtime]
+    runs-on: windows-latest
+    environment: ${{ github.ref_name == 'Main' && 'release' || 'beta' }}
     permissions:
       contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO_URL: https://github.com/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-      - name: Read version
+      - name: Channel, version and tag
         id: v
-        run: echo "tag=v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "$GITHUB_REF_NAME" = "Main" ]; then
+            echo "channel=stable" >> "$GITHUB_OUTPUT"; echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=beta" >> "$GITHUB_OUTPUT"; echo "tag=v$ver-beta" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
       - name: Refuse existing tag
         run: "! git ls-remote --exit-code --tags origin ${{ steps.v.outputs.tag }}"
-      # TODO(phase 1): evr-sign writes manifest.json from the artifacts + docs/changelog,
-      # signs with EVR_SIGNING_KEY (environment secret), and outputs manifest.signed.json.
-      - name: Create release
+      - name: Sign the manifest
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ steps.v.outputs.tag }}" --target "$GITHUB_SHA" --generate-notes pc/*
+          EVR_SIGNING_KEY: ${{ secrets.EVR_SIGNING_KEY }}
+        run: |
+          mkdir -p upload
+          test -f runtime/evr-runtime.dll || { echo "::error::build-runtime made no evr-runtime.dll"; exit 1; }
+          if [ -z "$EVR_SIGNING_KEY" ]; then
+            echo "::error::EVR_SIGNING_KEY is not set on the '${{ github.ref_name == 'Main' && 'release' || 'beta' }}' environment"; exit 1
+          fi
+          mkdir -p rel/pc && cp runtime/evr-runtime.dll rel/pc/
+          printf '%s' "$EVR_SIGNING_KEY" > signing.key
+          ./tools/evr-sign.exe build --key signing.key --label RELEASE --version "${{ steps.v.outputs.version }}" \
+            --channel "${{ steps.v.outputs.channel }}" --commit "$GITHUB_SHA" --dir rel \
+            --base-url "$REPO_URL/releases/download/${{ steps.v.outputs.tag }}" \
+            --title "EVR-Runtime ${{ steps.v.outputs.tag }}" --out upload
+          rm -f signing.key
+      - name: Create release
+        run: |
+          shopt -s nullglob
+          flags="--latest"
+          [ "${{ steps.v.outputs.channel }}" = "beta" ] && flags="--prerelease --latest=false"
+          gh release create "${{ steps.v.outputs.tag }}" --target "$GITHUB_SHA" --generate-notes $flags upload/* pc/*
+      - name: Point the beta feed (devtest) at this release
+        if: steps.v.outputs.channel == 'beta'
+        run: |
+          gh release view devtest >/dev/null 2>&1 || gh release create devtest --target "$GITHUB_SHA" --prerelease \
+            --latest=false --title "DevTest beta feed" --notes "Rolling beta feed. Only Atlas beta testers are pointed here."
+          gh release upload devtest upload/manifest.signed.json --clobber

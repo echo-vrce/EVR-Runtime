@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod channel;
 pub mod session;
 pub use session::{Phase, Session, Status};
 

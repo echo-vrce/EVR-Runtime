@@ -43,6 +43,7 @@ add_executable(evr_tests
   tests/friends/test_friends_level.cpp
   tests/friends/test_friends_package.cpp
   tests/cdn/test_cdn_index.cpp
+  tests/cdn/test_cdn_catalog.cpp
   tests/updates/test_updates.cpp
   tests/earlyquit/test_lockout_rules.cpp
   tests/menu/test_wording.cpp

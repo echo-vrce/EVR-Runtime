@@ -1,6 +1,6 @@
 # EVR-Runtime handoff
 
-Updated: 2026-11-18 01:20 (top section); older sections from 2026-11-17. This is the one handoff for the whole stack: **EVR-Runtime** (this repo), **atlas**
+Updated: 2026-11-18 01:40 (top section); older sections from 2026-11-17. This is the one handoff for the whole stack: **EVR-Runtime** (this repo), **atlas**
 (`J:\EchoVR-Tools-Launcher\atlas`, the Nakama fork) and **EchoRustServer** (`J:\EchoVR-Tools-Launcher\EchoRustServer`,
 the Rust game server and launcher). Nothing is committed in any of them; all work is in the working trees.
 
@@ -9,7 +9,228 @@ the Rust game server and launcher). Nothing is committed in any of them; all wor
 - Appendix A: the full atlas + EchoRustServer handoff (local test stack, atlas changes, Rust server, restarts,
   next steps). The same text also lives in `J:\EchoVR-Tools-Launcher\EchoRustServer\HANDOFF.md`.
 
-## Current state (2026-11-18 01:20) — read this first; section 0 below is older (21:45)
+## 2026-11-18: guild asset site, lobby poster texture, CDN cosmetics (built and tested locally; NOT tried in game)
+
+Nothing committed.
+
+**03:40 DEPLOYED for in-game testing (user asked):**
+- Atlas:
+  - `atlas.exe` is now `atlas.assets0340.exe`: the full working tree, so /beta, the channel route and the asset site.
+    Previous: `atlas.beta0313.exe`.
+  - Started detached through WMI with `logs\atlas.0345.stdout.log`. The log shows "asset site serving", astcenc on,
+    and 43 slash commands registered.
+- `data/nakama.yml` (backup `nakama.yml.pre-assets`) gained:
+  - `EVR_ASTCENC` = `HOWTOBUILD/local/tools/astcenc-avx2.exe` (copied from the Texture Editor);
+  - `EVR_ASSETS_SESSION_KEY` (random);
+  - `EVR_ASSETS_PUBLIC_URL=http://127.0.0.1:7350`;
+  - `EVR_ASSETS_DEV_LOGIN=1`;
+  - a commented `DISCORD_CLIENT_SECRET`.
+- Runtime: `plugins\versions\0.10.0\evr-runtime.dll` is now the local build (`runtime/build`, Release, party OFF).
+  - It is CI 0.10.0 plus the CDN catalog work plus the uncommitted LoaderChannel change in `login_pc.cpp`.
+  - The CI DLL is kept as `evr-runtime.dll.ci-0.10.0`. The loader does not re-hash at boot, so the swap loads.
+  - The ATLAS CDN key pinned in the build matches the running atlas.
+- Checked on the real atlas:
+  - Dev login as he_is_the_cat (`/evr/assets/auth/dev?discord_id=800101527305846855`) lists "he_is_the_cat's server"
+    (why: owner).
+  - The guild's index is signed at serial 0, with no entries yet.
+  - A dev login carrying `Cf-Connecting-Ip` gets 404.
+- Cloudflare: `proxiedRequest` (in `evr_assets_site.go`) refuses the dev login whenever any proxy header is present,
+  because cloudflared connects from 127.0.0.1. There is a test for this.
+  - The tunnel config and steps are in `HOWTOBUILD/local/cloudflared/` (`config.yml` publishes only `/evr/assets/`,
+    plus `README.md`).
+  - Not set up yet: it needs the user's Cloudflare login and domain, cloudflared installed, and the OAuth secret and
+    redirect.
+- 04:00:
+  - The loader moved to **0.10.1** from the beta feed: the /beta tester through Atlas, which is CI with parties on and
+    without the CDN catalog. The game then lost the tint.
+  - `versions\0.10.1\evr-runtime.dll` is now the local `runtime/build-party` build (parties ON, like the beta CI). The
+    CI DLL is kept as `evr-runtime.dll.ci-0.10.1`.
+  - The next beta release will overwrite it again, until the CDN work is committed to DevTest.
+  - Atlas `atlas.assets0400.exe` fixes the Owners search, which showed "no account" for owners and for players without
+    the guild's member role:
+    - search results take any linked account;
+    - `IsMember` also accepts the Atlas group (owner, admin or member) or the Discord server;
+    - server avatars now load.
+- Bug to fix (not mine): `login_pc.cpp` `LoaderChannel` uses the string `"\hid.dll"`. `\h` is not a valid escape, so
+  GetModuleHandle fails and the code falls back to `g_channel`. Harmless, but the loader channel is never read.
+  Use `"\\hid.dll"`.
+
+### Stock fixes: STUB icons and "S7?"/"Store 5?"/"??" names (04:20)
+- What: the game ships 15 emissives with work-in-progress names ("S7? Lancer", "Store 5? Borealis", "?? Dawn") and
+  13 items (10 emissives, `rwd_tint_0019/0026/0027`) with a STUB placeholder icon. Atlas fixes them for everyone.
+- How (atlas `server/evr_assets_stockfix.go`): at boot, one global AtlasCDN asset per item, kind `stock_fix`, id
+  `stockfix-<item>`, PC only:
+  - a spec `{"internal_name","display_name"}` of type `evr_cdn_stock_fix` (name = the item's symbol);
+  - for a STUB tint/emissive, its icon drawn from its own colours (`colourItemIcon`), B8G8R8A8_UNORM_SRGB, served
+    under the stock icon's own texture name (the `icon` hex in the catalogue).
+  - STUB = an icon picture that several texture names share. Names lose the prefix regex in `cleanStockName`.
+  - Synced each boot (unchanged: no serial bump; no longer needed: deleted). `EVR_ASSETS_STOCK_FIXES=0` removes them.
+  - The site's All cosmetics tab shows the clean names and drawn icons (`game_name` keeps the game's).
+- Runtime (`cdn_catalog.h`): `StockFix`, `ParseStockFix`, `ApplyStockFixes` (renames in place, list size unchanged);
+  `TextureNames` skips kind `stock_fix` (the stock packages already list those names, no placeholder). `cdn_pc.cpp`
+  collects `kStockFixType` specs and `PatchItemList` applies them (also when there are no CDN items). Test
+  `CdnCatalog.StockFixesRenameInPlace`; the names-set test covers the skip.
+- Catalogue: `stockcat` now exports `colors` for tints and emissives (131 items). `HOWTOBUILD/local/catalog/catalog.json`
+  replaced (old: `catalog.json.pre-colors`); icons unchanged.
+- Emissive icons have two styles in `evr_assets_thumbs.go`: `splat` (default; the newer stock look: vertical gradient,
+  first colour on top, white splat + shadow from `evr_assets_thumbsplat.png`, fits the stock splat icons to 1-11/255
+  when the colour order matches; the game's own order is inconsistent) and `classic` (horizontal). One colour: plain tile.
+- Generated stub icons for review: `H:\EVR\generated-emissive-icons\` (with `_comparison.png`).
+- Quest: not covered (no Quest runtime reads stock fixes).
+
+### More kinds and "Everyone has it" (04:28, deployed as `atlas.kinds2.exe`)
+- New site kinds: banner (`rwd_banner_s1_basic`, cropped 1024x2048), medal (`rwd_medal_s1_arena_bronze`, 512x512),
+  pip (`rwd_pip_0001`, 1024x512). Each is one 2D texture like a decal (checked in the stock packages); the loadout code
+  already equips those categories. Each kind shows its size hint in the dialog.
+- Not added (not one picture): title, emote (frames), goal FX, chassis/booster/bracer (models; the model pipeline is
+  still to do).
+- "Everyone has it": `CDNItem.Everyone`; set at create (checkbox) or on the card ("Give everyone" /
+  "Only given players", `POST assets/<id>/everyone`). `evr_assets_everyone.go` keeps a process-wide set rebuilt from
+  the store (boot, create, delete, toggle) and `cosmeticDefaults` merges it into arena and combat.
+- Full `go test ./server/`: everything passes except two flaky tests in committed files this work did not touch:
+  `TestMatchStart_SuccessfulStartCommitsTheLabel` and `TestSyncJournalAndProfileWithRetry_KeepsLocalEditOfSharedRecord`
+  (each fails about 2 runs in 5 even alone).
+
+### Lobby poster used to show the UPDATE card: cause and fix
+- Cause: atlas `evr/config_success.go` `DefaultActiveBattlePassSeasonConfigResource` sets
+  `marketing.lobby_poster_start_texture` and `lobby_poster_upsell_texture` to `ui_mnu_news_latest` (`4bc2590a55dc5b9e`).
+  `main_menu`'s `news.sentiment.texture` uses that same texture for the UPDATE card. `ui_mnu_news` (`86300ac728482baf`) is referenced
+  only by canvas `823b3b24cdd697ff` in scene `mnu_master`.
+- Fix: a new texture name, `evr_lobby_poster` (`85c8a8ec5d6c774a`).
+  - Atlas `evr_pipeline_config.go` `applyRuntimeLobbyPoster` rewrites those two keys, only for `RuntimeKind() == EVR` sessions and only
+    when the value is still `ui_mnu_news_latest`, so stock clients are unchanged.
+  - The runtime (`cdn_pc.cpp` Boot) mounts a names set `evr_cdn_names` (written under `plugins\cdn\set\rad15\win10\`) that lists
+    `evr_lobby_poster` plus every texture in the cached signed index. The game only loads names a mounted package lists.
+  - Default: the runtime captures the stock `ui_mnu_news_latest` bytes and serves them as `evr_lobby_poster` (`PosterDefault`). A guild
+    poster in the CDN index overrides it.
+
+### CDN cosmetics (runtime)
+- `runtime/src/cdn/cdn_catalog.h`: a CDN asset of type `evr_cdn_cosmetic` (`857950dab19ceafb`) is a JSON spec. The runtime appends it
+  to `CR15NetRewardItemCR` (type `32f30fe361939dee`, name `43934c379cf1e366`, 664-byte entries) as a copy of a stock template entry,
+  overriding the name, rarity, thumbnail, texture and colours.
+- Templates: decal `rwd_decal_ramen_a`, pattern `rwd_pattern_s1_a`, tag `rwd_tag_0027`, tint `tint_neutral_a_default`, emissive `rwd_emissive_0014`.
+- Boot now runs before the worker. It opens the cached `plugins\cdn\index.signed.json` (30-day grace), so items and textures exist on
+  the first menu. Refresh saves that file.
+- Tests: `tests/cdn/test_cdn_catalog.cpp` (7). The runtime build and ctest pass.
+
+### Atlas guild asset site, `/evr/assets/`
+- Files: `server/evr_assets_site.go`, `evr_texture_convert.go`, `evr_assets_web/` (embedded UI), `evr_assets_site_test.go`, and
+  changes to `evr_atlascdn.go`. `RegisterAtlasCDN` now takes the discordgo session; the call is in `evr_runtime.go`.
+- Sign-in: Discord OAuth through the bot's application. Managers: the Discord role **Asset Manager**, plus the guild owner, auditors and
+  global operators. The CDN's own admin check also accepts the role now.
+- What a manager can do:
+  - Cosmetics: name, description, rarity, kind (decal / pattern / tag / tint / emissive). The item PNG is asked for unless it is a tint
+    or an emissive, which take colours instead. A thumbnail is always asked for.
+  - Lobby poster: 2048x1024, cover-cropped.
+  - Share: other guilds can "Add to guild" from the Shared catalog.
+  - Owners: search the guild's members and give or remove an item. This writes wallet keys `cosmetic:arena:<item>` and
+    `cosmetic:combat:<item>`, the same keys VRML entitlements use.
+  - Signed index tab: the index EVR-Runtime gets, checked against the atlas key.
+- Conversion matches EchoVR-Texture-Editor:
+  - PC: DDS DX10 B8G8R8A8 with a 256-byte descriptor.
+  - Quest: raw ASTC 8x8 with a 248-byte descriptor.
+  - Quest is encoded with `astcenc` when `EVR_ASTCENC` is set (for example the Texture Editor's `Settings\astcenc-avx2.exe`). Without
+    it, Quest gets a solid average colour.
+- Env settings:
+  - `DISCORD_CLIENT_SECRET` is required for real sign-in.
+  - `DISCORD_CLIENT_ID` (defaults to the bot's user id).
+  - `EVR_ASSETS_PUBLIC_URL` or `EVR_ASSETS_REDIRECT_URI`. Add the redirect `<public>/evr/assets/auth/callback` in the Discord dev portal.
+  - `EVR_ASSETS_SESSION_KEY`.
+  - `EVR_ASTCENC`.
+  - `EVR_ASSETS_DEV_LOGIN=1` enables `/evr/assets/auth/dev?discord_id=N`, from loopback only.
+- Proven:
+  - `go build ./...` passes, and the site, CDN, texture and config tests pass.
+  - The full `go test ./server/` had two failures, `TestMatchStart_SuccessfulStartCommitsTheLabel` and
+    `TestSyncJournalAndProfileWithRetry_KeepsLocalEditOfSharedRecord`. Both pass when run alone (flaky, not touched by this work).
+  - Local end-to-end run in the browser through the dev harness (`EVR_ASSETS_DEV_SERVE=127.0.0.1:7361 go test ./server/ -run
+    TestAssetSiteDevServe`), with fake guilds:
+    - A decal was created and converted (astcenc), with the right sizes in the signed index.
+    - A poster landed under `85c8a8ec5d6c774a`: PC 8 MiB, Quest 512 KiB.
+    - The second guild added the shared decal.
+    - Giving an owner worked.
+    - The phone layout has no sideways scroll.
+- NOT tried in game, or still needed:
+  - The names set mount, the poster default capture, the item list append, and the config rewrite effect.
+  - Whether a new item shows in the booth and can be equipped.
+  - The pattern template's 8-byte image extra data.
+  - Thumbnail gamma: B8G8R8A8 is written without sRGB conversion.
+  - Posters have one mip.
+  - Quest has not been tried at all.
+  - Create the "Asset Manager" role in each Discord server, set the OAuth secret and redirect, rebuild and restart the real atlas, and
+    deploy the new runtime DLL. Coordinate the DLL deploy with the session that owns `plugins\versions`.
+
+## 2026-11-18: release channels — Main = stable, DevTest = beta (built and unit-tested; not tried end to end)
+
+User decisions: the GitHub default branch stays **`Main`** (capital M). A second branch **`DevTest`** carries beta builds.
+Only players a global operator puts in with Atlas's Discord command `/beta` get them.
+- `.github/workflows/release.yml`: runs on pushes to `[Main, DevTest]`. Main -> channel `stable`, release
+  `v<ver>`, marked latest, environment `release`. DevTest -> channel `beta`, prerelease `v<ver>-beta`, environment
+  `beta`, and its `manifest.signed.json` is copied (`--clobber`) to the rolling prerelease **`devtest`**. The publish
+  job now signs with `evr-sign build --label RELEASE` (key: secret `EVR_SIGNING_KEY` on each environment). Next-steps
+  items 1 and 2 below (branch name, pipeline gaps 1-4) are done by this section.
+- Loader (`crates/evr-loader`): `DEFAULT_FEED` fixed to `echo-vrce/EVR-Runtime`. Before the feed check the worker
+  calls `resolve_channel`: reads `..\..\_local\config.json` (apiservice_host + discordid/password, like the runtime),
+  `POST /evr/runtime/token`, then `GET /evr/runtime/channel`; beta -> uses Atlas's feed with channel `beta`, anything
+  else (no config, Atlas down, old Atlas) -> stable. `plugins\config.json` `feed`/`channel` still override (Atlas not
+  asked). Log lines `channel: ...` in `plugins\evr-loader.log`. Pure parts in `crates/evr-updater/src/channel.rs`
+  (3 tests; workspace tests all pass).
+- Atlas (`J:\EchoVR-Tools-Launcher\atlas`, uncommitted): new system group **"Global Beta Testers"** (created at
+  start with the core groups); `GET /evr/runtime/channel` (`server/evr_runtime_channel_http.go`, 3 tests), beta feed
+  from runtime env `EVR_BETA_FEED` (default `.../releases/download/devtest/manifest.signed.json`); Discord
+  `/beta action:add|remove|list player:<...>` (`server/evr_discord_appbot_beta.go`, global operators only, audit
+  logged, player autocomplete shared with /lockout). Not rebuilt into `HOWTOBUILD/local/atlas.exe` and not tried.
+- The repo is now **public** (user, 2026-11-18): Actions are free and players can download release assets.
+- CI now builds everything: job `build-runtime` (MSYS2 MINGW64 GCC, CMake "MinGW Makefiles", Release, party OFF,
+  `ctest`) uploads `evr-runtime.dll`; `build-pc` builds `hid.dll` with `EVR_RELEASE_BUILD=1`, which makes
+  `crates/evr-loader/build.rs` leave the DEV key out (local builds keep DEV). `publish` signs with label RELEASE and
+  fails if the runtime or the secret is missing. Every push to Main/DevTest needs a new `version` in Cargo.toml
+  (the tag check refuses a repeat). Not run on GitHub yet.
+- Release key generated 2026-11-18: public half pinned as `RELEASE` in `keys/pinned.txt`; secret half in
+  `H:\EVR\release-key\release.key` (outside the repo, never commit). The user pastes it as `EVR_SIGNING_KEY` into
+  the `release` and `beta` environments, keeps an offline copy, then deletes the file.
+- Two-person lock (GitHub settings, user does them): ruleset on Main (PR required, 2 approvals, dismiss stale,
+  last-push approval, no force push, no bypass), DevTest similar with 1; `release` environment with required
+  reviewers + "Prevent self-review", deployment branch Main only; `beta` environment, branch DevTest only.
+- 03:05: first GitHub run (DevTest `efe86e9`) passed after the secret was set: `v0.1.0-beta` + rolling `devtest`
+  published; the downloaded manifest verifies with RELEASE for channel beta (stable refuses it) and the runtime's
+  sha256 matches. 03:10: workspace bumped to **0.10.0** (`aa7dafd`, DevTest) so it is above the 0.9.0 dev installs.
+  The user kept the release key that was shown in a screenshot (re-ran instead of rotating).
+- 03:13: `HOWTOBUILD/local/atlas.beta0313.exe` = atlas HEAD `8f461aa` + ONLY the /beta changes (built in a temporary
+  worktree, now removed), so the asset-site session's uncommitted atlas work is NOT in it. vet clean, channel/token/
+  lockout tests pass.
+- 03:21: SWAPPED IN. `atlas.exe` = `atlas.beta0313.exe` (previous = `atlas.2347.exe`), started detached through WMI
+  (`cmd /c atlas.exe --config data/nakama.yml > logs\atlas.0321.stdout.log`, survives the Claude session). Startup
+  done, 0 error lines, 43 slash commands registered (incl. /beta), channel route answers 401 without a token and
+  `{"channel":"stable"}` for the user's account. The asset-site session's atlas work is NOT in this build: the next
+  full-tree atlas build carries both. `v0.10.0-beta` is published (run on `aa7dafd` passed).
+- 03:23 "login authentication failed": NOT Atlas. The user pressed UPDATE on the old dev feed's **0.9.1** test
+  release (`dev/upload`), whose evr-runtime.dll predates `login/provider_redirect`; without the redirect the game
+  used pnsovr (`OVR-ORG-0`, "Must call get_signature first") and failed. 0.9.0 has the redirect (its run at 03:22:59
+  logged in as DMO fine).
+- 03:27: INSTALLED the GitHub `v0.10.0-beta` (CI build, MSYS2 GCC; first CI-built DLL in game, has the redirect):
+  `hid.dll` = release loader (RELEASE key only; previous kept as `hid.dll.0118-dev`), `versions\0.10.0\` =
+  evr-runtime.dll + manifest.signed.json (verified), `state.json` installed 0.10.0 / last_good 0.9.0, and
+  `config.json` lost its dev `feed`/`channel` overrides so the loader asks Atlas (backups `*.pre-0.10.0`). The
+  local DEV-signed feed no longer works with this loader (restore `hid.dll.0118-dev` for dev feed tests). The 0.10.0
+  build has no magenta test set (stock UPDATE card / lobby poster). Not launched yet.
+- 03:26 user launch of 0.10.0 (VR, no -noovr): pnsovr -> pnsdemo redirect, DMO login, `channel: beta (Atlas)`
+  (user had run /beta), up to date, boot ok, played a match. PARTY tab "currently disabled": expected, CI built
+  with EVR_PARTY=OFF.
+- 0.10.1 (`01083dc`, DevTest, pushed 03:3x; CI run 44231301262): DevTest CI builds with `-DEVR_PARTY=ON` (Main stays
+  OFF); new loader export `EvrUpdateChannel` (channel decided after asking Atlas, 0 until then), used by the
+  runtime's `evr_runtime|channel` login declaration (it said stable for beta testers). The runtime falls back to
+  config.json's channel with an older hid.dll, so the fix only shows with the 0.10.1 hid.dll installed by hand.
+  03:40: run passed, `v0.10.1-beta` verified (RELEASE, beta, sha ok, party code in, reads EvrUpdateChannel) and its
+  `hid.dll` INSTALLED in the game (previous `hid.dll.0100-release`). Runtime still 0.10.0: the in-game UPDATES card
+  should offer 0.10.1 (first real beta-channel update).
+- OVR login: the Oculus platform refuses every call for this app ("Must call get_signature first (1971051)":
+  GetAccessToken, friends, IAP, rich presence, room invites); the logged-in Oculus user is unavailable (OVR-ORG-0).
+  A real OVR-account login needs Meta's service to accept Echo VR again. Faking a token would give every player
+  the same OVR-ORG-0 identity. The VR/Oculus launch itself works: the provider redirect logs in as DMO.
+- Still to do: a removed beta tester stays on the beta version until a newer stable one ships (no
+  downgrade). Beta release assets are public on GitHub (prerelease): the gate is who the loader offers them to.
+
+## Current state (2026-11-18 01:40) — read this first; section 0 below is older (21:45)
 
 **Running / installed**
 - Atlas: `HOWTOBUILD/local/atlas.exe` (= `atlas.2347.exe`), started 00:48 as a background process of the 2026-11-18
@@ -62,16 +283,36 @@ the Rust game server and launcher). Nothing is committed in any of them; all wor
   = `54b96321fb9b6ed8`). The current 0.9.0 test set was made from two magenta payloads in the stock formats, built in
   the session scratchpad from the dump's DDS headers (game-derived: never commit or ship them).
 
-**Next**
-1. Rollback check: from 0.9.0 back to 0.8.0 (no set) and see the stock card. No in-game rollback button: set
+**Git (2026-11-18 01:40)**
+- Committed and on GitHub: `8f6d713` (loader: game exe names, another agent's work) and `9a5f7bb` (release package
+  sets, shared AddPackage hook, login without -noovr via `login/provider_redirect`, another agent's). Uncommitted on
+  purpose: `dev/upload.080/`, `dev/upload.090/` (dev feed copies).
+- The user renamed the GitHub branch `CatBranch` -> **`Main` (capital M)**; it is the default branch. Local branch is
+  `main`, tracking `origin/Main`. Older mentions of `CatBranch` below are history.
+- EchoRustServer has another agent's uncommitted combat work on its `main` (gear.rs, session.rs, agent.md; 123 tests
+  pass). The user said not to commit it from this repo's work; leave it to that repo's session.
+
+**Next steps (in order)**
+1. **Branch name vs the release workflow.** `.github/workflows/release.yml` runs on `push: branches: [main]`; GitHub
+   matches branch filters case-sensitively, so pushes to `Main` never start it. Either rename the GitHub branch to
+   lowercase `main` (Settings -> Branches, or the branch's "Rename"), or change the filter to `[Main]`. Ask the user
+   which; lowercase is the usual choice and matches the local branch.
+2. **Release pipeline gaps** (section "2026-11-18 — Release pipeline", items 1-5): build `evr-runtime.dll` (CMake +
+   MinGW) and run `ctest` in CI; sign in `publish` with the release key from the `release` environment; fix
+   `DEFAULT_FEED` (`heisthecat31/EVR-Runtime` -> `echo-vrce/EVR-Runtime`) in `crates/evr-loader/src/lib.rs`; generate
+   and pin the release key (drop DEV from release loaders); branch protection and required reviewers on GitHub.
+   Releases can now carry `pc/data/rad15/win10/...` package sets (no workflow change needed: evr-sign takes the tree).
+3. **UPDATE art from the server:** Atlas's `main_menu` config (`news.sentiment.texture`) picks the card's second
+   texture. Ship the art as a NEW texture name in a release set (or AtlasCDN) and have Atlas send that name; no stock
+   override. Atlas side belongs to the atlas session.
+4. **Rollback check:** from 0.9.0 back to 0.8.0 (no set) and see the stock card. No in-game rollback button: set
    `installed` to 0.8.0 in `plugins\state.json` with the game closed (dev mode turns boot-failure counting off).
-2. Atlas: let the main_menu config's `news.sentiment.texture` be set (per release / admin), for the UPDATE art.
-3. `Serve` larger than the stock buffer leaks the stock buffer once (resources_pc.cpp); fine for menu art.
-4. Quest: not done (content module is PC only; Quest data dir is `rad15\android`).
-5. Nothing committed (the user commits). New: `runtime/include/evr/packages.h`, `runtime/src/core/packages_pc.cpp`,
-   `runtime/src/content/*`, `runtime/tests/content/*`, `runtime/tools/make_test_set.cpp`; changed: CMakeLists,
-   runtime_main.cpp, friends_install_pc.cpp, `crates/evr-updater/src/tests.rs`. The `login/provider_redirect*` files
-   and their CMakeLists/runtime_main lines are the other session's.
+5. **Restore the dev test state when done:** remove the magenta test set from `versions\0.9.0\data` (or roll back),
+   move `dev/upload.080` back to `dev/upload` for the original 0.8.0 feed.
+6. `Serve` larger than the stock buffer leaks the stock buffer once (resources_pc.cpp); fine for menu art.
+7. Quest: the content module is PC only (Quest data dir is `rad15\android`).
+8. Older open items still stand: the "Next" list under "Where we are now" (JOIN VIA CODE typed code, refusal texts,
+   region/mode mapping, ...) and the party tab test with two clients ("Parties on PC").
 
 ## 0. Whole stack: current state (2026-11-17 21:45)
 
