@@ -1249,3 +1249,47 @@ UPDATES card/panel in game (user confirmed). Tested with manifests signed locall
   shows); (b) the runtime's resource hook on `AsyncResourceIOCallback` (0x140FA16D0) already overrides by (type, name)
   whatever the package order, as the CDN path does. Do not replace the stock manifest files in `_data`: an extra set
   plus an override keeps stock intact and rollback safe.
+
+### NEXT AGENT TASK: ship `_data` package sets with an update (added 2026-11-18, not started)
+
+Goal (user): a release can carry a new package set (manifest + package file) next to `evr-runtime.dll`; after Restart
+now the game loads it, and where it holds a resource the stock data also has, ours is the one the game uses.
+Background and constraints: the section above ("Shipping new `_data` packages with an update").
+
+**Step 1: find out which set wins (decides the design).**
+- Pick one stock texture that is easy to see on the main menu (the UPDATE card `86300ac728482baf`, 2048x1024 BC7,
+  descriptor type `4a4c32c49300b8a0`, payload type `beac1969cb7b8861`; see "UPDATE art, swapped from the server").
+- Build a one-resource set with a visibly changed copy, using the same writer the FRIENDS panel uses
+  (`friends/friends_package.h`, `friends_panel_resources.cpp`: `rad15\win10\manifests\<set id>` +
+  `rad15\win10\packages\<set id>_0`).
+- Mount it with AddPackage (0x140FA1680) after the last stock AddPackage (return address 0x1415497AC), as
+  `friends_install_pc.cpp` does, and launch (`-noovr -windowed -mp`; do not kill the user's game, ask them to close it).
+- Record in this file which picture shows. Also try mounting before the stock sets if the hook allows, to learn
+  whether order matters at all.
+
+**Step 2: generic mount of the release's sets.** New module, e.g. `runtime/src/content/` (pure part testable):
+- The active version folder is the folder `evr-runtime.dll` was loaded from (`GetModuleHandleExW` on a runtime
+  address + `GetModuleFileNameW`), i.e. `plugins\versions\<ver>\`.
+- Convention: `<version dir>\data\rad15\win10\manifests\<set id hex>` and `...\packages\<set id hex>_0` (more chunks
+  `_1`, `_2` if present). List `manifests\`, mount each set with `AddPackage(manager, set id, "<version dir>\data")`,
+  log each result (`[EVR.CONTENT] set ... added|NOT added result=N`). Skip names that are not 16 hex digits.
+- Share the AddPackage hook with the friends code instead of hooking twice (MinHook allows one detour per target):
+  move the hook into core (e.g. `evr::OnStockPackagesAdded(callback)`), and have friends and content both register.
+- Keep the prologue check (`kAddPackagePrologue`); on mismatch log and mount nothing.
+- Unit tests: the folder listing and name filter (no game needed), in `runtime/tests/`.
+
+**Step 3: overrides, if step 1 shows stock wins (or order is not reliable).**
+- Use the resource hook (`AsyncResourceIOCallback`, 0x140FA16D0, `RegisterResourceTransform` / overrides by
+  (type, name); the CDN path uses it) to serve our bytes for the (type, name) pairs the release lists.
+- Release side: an optional `data\overrides.json` listing `{type, name, file}`; the files sit in the version folder,
+  already sha256-checked by the updater.
+
+**Step 4: release tooling and checks.**
+- `evr-sign build --dir <release dir>` already signs every file under the dir; confirm a `data\...` tree goes through
+  `check_path` (relative, forward slashes) and lands under `versions\<ver>\data\`.
+- Update panel: any release with `data\` files must say Restart now (it already relaunches for runtime changes; check
+  the `relaunch` flag in the offer covers data too).
+- Test end to end with the DEV key and `dev\upload` (dev loop in "In-menu updates"): offer -> Update -> Restart now ->
+  log shows the set mounted -> the changed picture shows -> roll back to the previous version and the stock picture
+  is back.
+- Never write into the game's own `_data` folder.
