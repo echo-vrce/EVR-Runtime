@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "evr-loader"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "base64",
  "evr-manifest",
@@ -191,8 +191,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "evr-loader-quest"
+version = "0.10.2"
+dependencies = [
+ "base64",
+ "evr-manifest",
+ "evr-updater",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "evr-manifest"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -205,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "evr-sign"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -217,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "evr-updater"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "base64",
  "ed25519-dalek",

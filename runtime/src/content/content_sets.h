@@ -131,6 +131,20 @@ inline bool ExtractResource(const Manifest& m, std::size_t index, const Bytes& p
   return true;
 }
 
+/// The bytes of manifest resource `index` from `block`, the compressed bytes of its block alone (read from the
+/// package file at its block's offset: large sets are never read whole).
+inline bool ExtractResourceFromBlock(const Manifest& m, std::size_t index, const Bytes& block, Bytes* out) {
+  if (index >= m.resources.size()) return false;
+  const ResourceRecord& res = m.resources[index];
+  const BlockRecord& b = m.blocks[res.block];
+  if (block.size() != b.compressed) return false;
+  Bytes raw(b.size);
+  const std::size_t n = ZSTD_decompress(raw.data(), raw.size(), block.data(), block.size());
+  if (ZSTD_isError(n) != 0 || n != raw.size()) return false;
+  out->assign(raw.begin() + res.offset, raw.begin() + res.offset + res.size);
+  return true;
+}
+
 /// What the game read for one of our resources: our bytes (the set won), or another copy (stock won).
 enum class ReadVerdict { Ours, Stock };
 inline ReadVerdict Judge(const void* read, std::uint64_t readSize, const Bytes& ours) {

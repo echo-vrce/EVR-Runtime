@@ -79,9 +79,16 @@ inline constexpr std::uint8_t KeptFlags(std::uint8_t sent, std::uint8_t mask) { 
 // OK runs ReturnToHome, so with bit 5 on it can never leave the notice. Bit 5 also turns on the scoreboard's loyalty
 // values and the early-quit labels, so it stays on; only that one node is made to read "a notice is pending".
 
-/// A notice is due after an update the game took that starts a lockout or adds an early quit.
-inline constexpr bool NoticeDue(bool taken, bool lockoutRunning, std::int32_t quitsBefore, std::int32_t quitsAfter) {
-  return taken && (lockoutRunning || quitsAfter > quitsBefore);
+/// Whether an update adds an early quit. The first update after launch (held stamp -1) carries the player's lifetime
+/// count while the game still holds 0, so it is never new: a player with 10 old early quits got "0 -> 10" at every
+/// login, and the pending notice left the lobby's tablets (Public Watch) on an empty notice page (2026-11-26).
+inline constexpr bool NewEarlyQuit(std::int64_t held, std::int32_t quitsBefore, std::int32_t quitsAfter) {
+  return held != -1 && quitsAfter > quitsBefore;
+}
+
+/// A notice is due after an update the game took that starts a lockout or adds an early quit (NewEarlyQuit).
+inline constexpr bool NoticeDue(bool taken, bool lockoutRunning, bool newEarlyQuit) {
+  return taken && (lockoutRunning || newEarlyQuit);
 }
 
 /// The notice's buttons: right_button_press (OK) and left_button_press (INFO), sent with the notice page's key.

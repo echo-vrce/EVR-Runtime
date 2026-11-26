@@ -6,6 +6,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <mutex>
 
 #include "evr/core.h"
@@ -77,11 +78,26 @@ bool CheckBytes(const void* at, const std::uint8_t* bytes, std::size_t length) {
   return IsReadable(at, length) && std::memcmp(at, bytes, length) == 0;
 }
 
+namespace {
+std::mutex g_slotsMutex;
+std::map<void*, void**> g_slots;  // target -> its hook's `original`
+}  // namespace
+
+void** HookOriginalSlot(void* target) {
+  std::lock_guard<std::mutex> lock(g_slotsMutex);
+  auto it = g_slots.find(target);
+  return it == g_slots.end() ? nullptr : it->second;
+}
+
 bool Hook(void* target, void* detour, void** original, const char* name) {
   static const MH_STATUS init = MH_Initialize();
   (void)init;
   MH_STATUS s = MH_CreateHook(target, detour, original);
   if (s == MH_OK) s = MH_EnableHook(target);
+  if (s == MH_OK && original != nullptr) {
+    std::lock_guard<std::mutex> lock(g_slotsMutex);
+    g_slots[target] = original;
+  }
   Log(s == MH_OK ? LogLevel::Info : LogLevel::Error, "[EVR.HOOK] %s %s (%s)", name, s == MH_OK ? "installed" : "FAILED",
       MH_StatusToString(s));
   return s == MH_OK;

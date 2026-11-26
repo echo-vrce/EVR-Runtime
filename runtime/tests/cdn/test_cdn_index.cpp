@@ -77,3 +77,16 @@ TEST(CdnIndex, ParsesPinnedKeys) {
 }
 
 }  // namespace
+
+TEST(CdnIndex, AcceptsEveryKindAtlasServes) {
+  // Atlas serves posters, cosmetics and (its global set) stock fixes; an unknown kind refuses the whole index.
+  for (const char* kind : {"poster", "cosmetic", "stock_fix", "nonsense"}) {
+    nlohmann::json j = nlohmann::json::parse(IndexJson(2000));
+    j["entries"][0]["kind"] = kind;
+    const std::string idx = j.dump();
+    Index out;
+    std::string err;
+    EXPECT_EQ(Open(Envelope(idx), {{"ATLAS", kKey}}, 1, Accept(idx), 1000, &out, &err), std::string(kind) != "nonsense")
+        << kind << " " << err;
+  }
+}

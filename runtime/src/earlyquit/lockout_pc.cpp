@@ -323,12 +323,13 @@ void SetterHook(void* netGame, std::int64_t stamp, std::int64_t expiry, std::int
            static_cast<long long>(l.running ? l.expiry - now : 0));
   g_netGame.store(netGame);
   if (!l.take) return;
-  if (NoticeDue(l.take, l.running, quitsBefore, earlyQuits) && !g_noticePending.exchange(true))
+  const bool newQuit = NewEarlyQuit(held, quitsBefore, earlyQuits);
+  if (NoticeDue(l.take, l.running, newQuit) && !g_noticePending.exchange(true))
     evr::Log(evr::LogLevel::Info, "[EVR.EARLYQUIT] notice pending (%s)", l.running ? "lockout" : "early quit");
   Write64(netGame, kExpiry, l.expiry);
   if (std::uint64_t* flags = FlagsOf(netGame)) {
     *flags = l.running ? (*flags | kRunningBit) : (*flags & ~kRunningBit);
-    if (earlyQuits > quitsBefore) {  // Atlas counted a new early quit: the menu's EARLY QUIT page may show it
+    if (newQuit) {  // Atlas counted a new early quit: the menu's EARLY QUIT page may show it
       g_atlasReportedQuit.store(true);
       *flags |= kWarningBit;
       evr::Log(evr::LogLevel::Info, "[EVR.EARLYQUIT] early-quit warning from Atlas (%d -> %d)", quitsBefore, earlyQuits);

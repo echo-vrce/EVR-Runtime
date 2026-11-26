@@ -155,7 +155,7 @@ fn session_up_to_date_and_errors_offer_nothing() {
 
 #[test]
 fn package_set_lands_in_the_version_data_folder() {
-    // A release's own package set (runtime content/): dataad15\win10\{manifests,packages} under the version folder.
+    // A release's own package set (runtime content/): data/rad15/win10/{manifests,packages} under the version folder.
     const MANIFEST: &[u8] = b"manifest-bytes";
     const PACKAGE: &[u8] = b"package-bytes";
     let files: [(&str, &[u8]); 3] = [
@@ -175,4 +175,33 @@ fn package_set_lands_in_the_version_data_folder() {
     let dir = u.active_dir().unwrap();
     assert_eq!(fs::read(dir.join("data/rad15/win10/manifests/54b96321fb9b6ed8")).unwrap(), MANIFEST);
     assert_eq!(fs::read(dir.join("data/rad15/win10/packages/54b96321fb9b6ed8_0")).unwrap(), PACKAGE);
+}
+
+#[test]
+fn unchanged_files_are_copied_from_the_installed_version() {
+    // 1.0.0 installed with a package set; 1.1.0 ships the same set and a new dll: only the dll is fetched.
+    const PACKAGE: &[u8] = b"package-bytes";
+    let v1: [(&str, &[u8]); 2] = [("evr-runtime.dll", BODY), ("data/rad15/win10/packages/54b96321fb9b6ed8_0", PACKAGE)];
+    let v2: [(&str, &[u8]); 2] = [("evr-runtime.dll", b"new-dll"), ("data/rad15/win10/packages/54b96321fb9b6ed8_0", PACKAGE)];
+    let d = tempfile::tempdir().unwrap();
+    let u = up(d.path());
+    let o = match u.decide(env_files(Version(1, 0, 0), &v1), 0).unwrap() {
+        Decision::Prompt(o) => o,
+        _ => panic!("expected prompt"),
+    };
+    u.stage_with(&o, &mut |_, _| {}, |f| Ok(v1.iter().find(|x| x.0 == f.path).unwrap().1.to_vec())).unwrap();
+    u.boot().unwrap();
+    let o = match u.decide(env_files(Version(1, 1, 0), &v2), 0).unwrap() {
+        Decision::Prompt(o) => o,
+        _ => panic!("expected prompt"),
+    };
+    let mut fetched = Vec::new();
+    u.stage_with(&o, &mut |_, _| {}, |f| {
+        fetched.push(f.path.clone());
+        Ok(v2.iter().find(|x| x.0 == f.path).unwrap().1.to_vec())
+    })
+    .unwrap();
+    assert_eq!(fetched, vec!["evr-runtime.dll".to_string()]);
+    let staged = d.path().join("versions/1.1.0/data/rad15/win10/packages/54b96321fb9b6ed8_0");
+    assert_eq!(fs::read(staged).unwrap(), PACKAGE);
 }

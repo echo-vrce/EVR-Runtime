@@ -180,7 +180,7 @@ inline bool Open(const std::string& envelope, const std::vector<PinnedKey>& pinn
     }
     if (e.contains("asset") && e["asset"].is_string()) x.asset = e["asset"].get<std::string>();
     if (e.contains("title") && e["title"].is_string()) x.title = e["title"].get<std::string>();
-    if (x.id.empty() || (x.kind != "poster" && x.kind != "cosmetic") || !ParseHex64(e.value("type", ""), &x.type) ||
+    if (x.id.empty() || (x.kind != "poster" && x.kind != "cosmetic" && x.kind != "stock_fix") || !ParseHex64(e.value("type", ""), &x.type) ||
         !ParseHex64(e.value("name", ""), &x.name) || !IsSha256Hex(x.sha256) || x.size == 0 || x.size > kMaxFileBytes) {
       *error = "entry " + x.id;
       return false;

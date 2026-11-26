@@ -5,3 +5,6 @@
 /dev/upload/
 /dev/release-src/
 /runtime/build-party/
+
+# local tooling / scratch (holds the revault MCP bearer token)
+.mcp.json

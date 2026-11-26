@@ -95,3 +95,26 @@ TEST(ContentSets, Judge) {
 }
 
 }  // namespace
+
+TEST(ContentSets, EmptyResourcesOnlyWhenAllowedAndReadByBlock) {
+  fp::PackageSet set;
+  EXPECT_FALSE(fp::BuildPackageSet({{1, 1, Bytes()}, {1, 2, Bytes(3, 7)}}, &set));
+  EXPECT_FALSE(fp::BuildPackageSet({}, &set, true));
+  // A resource larger than a block gets its own; each is read back from its block's bytes alone.
+  ASSERT_TRUE(fp::BuildPackageSet({{1, 1, Bytes()}, {1, 2, Bytes(3, 7)}, {1, 3, Bytes(0x90000, 9)}}, &set, true));
+  evr_content::Manifest m;
+  ASSERT_TRUE(evr_content::ParseManifest(set.manifest, &m));
+  ASSERT_EQ(m.resources.size(), 3u);
+  for (std::size_t i = 0; i < m.resources.size(); ++i) {
+    const evr_content::BlockRecord& b = m.blocks[m.resources[i].block];
+    const Bytes block(set.package.begin() + b.offset, set.package.begin() + b.offset + b.compressed);
+    Bytes got, whole;
+    ASSERT_TRUE(evr_content::ExtractResourceFromBlock(m, i, block, &got));
+    ASSERT_TRUE(evr_content::ExtractResource(m, i, set.package, &whole));
+    EXPECT_EQ(got, whole);
+    const std::size_t want = m.resources[i].name == 1 ? 0 : m.resources[i].name == 2 ? 3 : 0x90000;
+    EXPECT_EQ(got.size(), want);
+  }
+  Bytes junk;
+  EXPECT_FALSE(evr_content::ExtractResourceFromBlock(m, 1, Bytes(2, 0), &junk));  // not that block's size
+}

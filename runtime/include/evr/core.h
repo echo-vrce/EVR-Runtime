@@ -26,6 +26,11 @@ bool CheckBytes(const void* at, const std::uint8_t* bytes, std::size_t length);
 /// Detour `target` to `detour`; `*original` receives the trampoline. Logged by `name`.
 bool Hook(void* target, void* detour, void** original, const char* name);
 
+/// Where a hook made by Hook() keeps its trampoline (its `original`), or nullptr when Hook() did not hook `target`.
+/// MinHook takes one hook per function: a second one (EchoCombat's, combat/detours_shim_pc.cpp) chains in by taking
+/// that slot's value as its own original and putting its detour in the slot, so the first detour calls the second.
+void** HookOriginalSlot(void* target);
+
 /// One checked hook by VA + expected prologue. Returns false (and logs) when the bytes differ.
 template <std::size_t N>
 bool HookVA(std::uint64_t va, const std::uint8_t (&prologue)[N], void* detour, void** original, const char* name) {

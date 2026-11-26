@@ -17,8 +17,8 @@
 // 3. The lobby poster. The stock lobby poster is not level data: it is the texture Atlas's active_battle_pass_season
 //    config names in marketing.lobby_poster_start_texture / lobby_poster_upsell_texture, and that was
 //    ui_mnu_news_latest, the UPDATE card's texture. Atlas now names kLobbyPoster for EVR-Runtime clients, so a guild's
-//    poster and the UPDATE card no longer share a texture. Until the CDN serves a poster, kLobbyPoster shows a copy of
-//    the stock ui_mnu_news_latest (captured as the menu reads it), so nothing changes for a guild without one.
+//    poster and the UPDATE card no longer share a texture. Until the CDN serves a poster, kLobbyPoster shows a neutral
+//    built-in default the runtime makes itself (no game art is read), so a guild without one never shows the UPDATE art.
 // 4. Stock fixes (index entries of kind kStockFixKind, Atlas's global set). A spec (type kStockFixType) renames a stock
 //    item in place: {"internal_name": "rwd_emissive_0017", "display_name": "Lancer"}. Its texture entries replace a
 //    stock texture (a placeholder STUB icon) by name; the stock packages already list that name, so it stays out of
@@ -48,7 +48,6 @@ inline constexpr std::uint64_t kCosmeticItemType = evr::Symbol64("evr_cdn_cosmet
 inline constexpr std::uint64_t kStockFixType = evr::Symbol64("evr_cdn_stock_fix");  // index entries holding a rename
 inline constexpr const char* kStockFixKind = "stock_fix";
 inline constexpr std::uint64_t kLobbyPoster = evr::Symbol64("evr_lobby_poster");
-inline constexpr std::uint64_t kNewsLatest = 0x4BC2590A55DC5B9EULL;  // ui_mnu_news_latest: the stock poster art
 static_assert(kRewardItemType == evr::Symbol64("Win10", kRewardItemClass), "the list's on-disk type");
 static_assert(kLobbyPoster == 0x85C8A8EC5D6C774AULL, "Atlas names this texture");
 
@@ -60,6 +59,9 @@ namespace catalog_detail {
 inline constexpr std::size_t kInternalSym = 0, kInternalSym2 = 32, kInternalName = 40, kType = 104, kRarity = 112,
                              kThumbnail = 128, kDisplayName = 168, kDescription = 232, kTexture = 320,
                              kImageVec = 432, kOtherVec = 488, kVecBytes = 8, kVecCount = 40, kVecCount2 = 48;
+// Model fields (NewCosmetics cosmeticdb): UnknownSymbol6 = the 3p body material, UnknownSymbol7 mirrors the 3p model,
+// AssetSymbol6 = the 1p model, AssetSymbol12 = the 3p model. AssetSymbol<k> sits at 544 + 8 (k - 1).
+inline constexpr std::size_t kMaterial3p = 144, kModel3pMirror = 152, kModel1p = 584, kModel3p = 632;
 
 template <typename T>
 T Get(const std::string& b, std::size_t at) {
@@ -101,6 +103,8 @@ inline bool Name(const nlohmann::json& j, const char* key, std::string* out, boo
 //    "description": "...", "rarity": "<16 hex>", "thumbnail": "<16 hex>", "texture": "<16 hex>",
 //    "colors": [[r, g, b], ...]}            (tint: exactly 2; emissive: 1-16; 0..1 floats)
 // template and internal_name are required; any other key absent keeps the template's value.
+//   optional "model_3p", "model_1p", "material_3p" (16 hex): a model item (chassis) whose resources a release set
+//   ships (models come with updates, never from the CDN).
 //   optional "source": the line under the name in the booth ("<guild> Item"; the game's own are "Level 12", "Store
 //   Item"...). Absent: kDefaultSource. The game has no field for it: cdn_pc.cpp hooks the function that writes it.
 inline constexpr const char* kDefaultSource = "Guild Item";
@@ -110,6 +114,9 @@ struct CosmeticItem {
   bool hasDisplay = false, hasDescription = false;
   std::uint64_t rarity = 0, thumbnail = 0, texture = 0;
   bool hasRarity = false, hasThumbnail = false, hasTexture = false;
+  std::uint64_t model3p = 0, model1p = 0, material3p = 0;
+  bool hasModel3p = false, hasModel1p = false, hasMaterial3p = false;
+  bool mirrorModel3p = true;  // a chassis' UnknownSymbol7 mirrors its 3p model; a booster's does not
   std::vector<float> colors;  // 3 per colour
   bool hasColors = false;
 };
@@ -137,6 +144,14 @@ inline bool ParseCosmeticItem(const std::string& text, CosmeticItem* out, std::s
   if ((it.hasRarity && !Hex64(j, "rarity", &it.rarity)) || (it.hasThumbnail && !Hex64(j, "thumbnail", &it.thumbnail)) ||
       (it.hasTexture && !Hex64(j, "texture", &it.texture))) {
     *error = "rarity, thumbnail and texture are 16 lowercase hex";
+    return false;
+  }
+  it.hasModel3p = j.contains("model_3p");
+  it.hasModel1p = j.contains("model_1p");
+  it.hasMaterial3p = j.contains("material_3p");
+  if ((it.hasModel3p && !Hex64(j, "model_3p", &it.model3p)) || (it.hasModel1p && !Hex64(j, "model_1p", &it.model1p)) ||
+      (it.hasMaterial3p && !Hex64(j, "material_3p", &it.material3p))) {
+    *error = "model_3p, model_1p and material_3p are 16 lowercase hex";
     return false;
   }
   if (j.contains("colors")) {
@@ -216,6 +231,12 @@ inline bool AppendCosmeticItems(const std::string& list, const std::vector<Cosme
     if (it.hasRarity) Put<std::uint64_t>(&e, kRarity, it.rarity);
     if (it.hasThumbnail) Put<std::uint64_t>(&e, kThumbnail, it.thumbnail);
     if (it.hasTexture) Put<std::uint64_t>(&e, kTexture, it.texture);
+    if (it.hasModel3p) {
+      Put<std::uint64_t>(&e, kModel3p, it.model3p);
+      if (it.mirrorModel3p) Put<std::uint64_t>(&e, kModel3pMirror, it.model3p);
+    }
+    if (it.hasModel1p) Put<std::uint64_t>(&e, kModel1p, it.model1p);
+    if (it.hasMaterial3p) Put<std::uint64_t>(&e, kMaterial3p, it.material3p);
     if (it.hasColors) {
       other.assign(it.colors.size() * 4, '\0');
       std::memcpy(&other[0], it.colors.data(), other.size());
