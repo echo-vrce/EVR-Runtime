@@ -197,22 +197,30 @@ void Worker() {
   }
 }
 
-// nEVR (nevr-runtime.dll) signs the player in through echovrce.com/device and keeps the session token; friends and
-// parties use that token when nEVR is loaded, so a player's nEVR friends are the friends shown here.
-HMODULE Nevr() { return GetModuleHandleW(L"nevr-runtime.dll"); }
+// nEVR signs the player in through echovrce.com/device and keeps the session token; friends and parties use that
+// token when nEVR is loaded, so a player's nEVR friends are the friends shown here. nEVR loads as the game folder's
+// BugSplat64.dll, which exports TokenAuth_* (thunks into nevr-runtime.dll, which exports them too). The stock
+// BugSplat64.dll has no such export, so finding one is what says nEVR is there.
+FARPROC NevrExport(const char* name) {
+  for (const wchar_t* module : {L"BugSplat64.dll", L"nevr-runtime.dll"}) {
+    if (HMODULE h = GetModuleHandleW(module))
+      if (FARPROC fn = GetProcAddress(h, name)) return fn;
+  }
+  return nullptr;
+}
+
+bool Nevr() { return NevrExport("TokenAuth_GetToken") != nullptr; }
 
 std::string NevrToken() {
   using GetToken = const char* (*)();
-  HMODULE h = Nevr();
-  auto fn = h ? reinterpret_cast<GetToken>(GetProcAddress(h, "TokenAuth_GetToken")) : nullptr;
+  auto fn = reinterpret_cast<GetToken>(NevrExport("TokenAuth_GetToken"));
   const char* token = fn ? fn() : nullptr;
   return token != nullptr ? std::string(token) : std::string();
 }
 
 std::uint64_t NevrDiscordId() {
   using GetId = std::uint64_t (*)();
-  HMODULE h = Nevr();
-  auto fn = h ? reinterpret_cast<GetId>(GetProcAddress(h, "TokenAuth_GetDiscordId")) : nullptr;
+  auto fn = reinterpret_cast<GetId>(NevrExport("TokenAuth_GetDiscordId"));
   return fn ? fn() : 0;
 }
 
@@ -292,7 +300,7 @@ std::string Token() {
   std::lock_guard<std::mutex> lock(t.mutex);
   const Config& c = Cfg();
   const std::uint64_t now = GetTickCount64();
-  if (Nevr() != nullptr) {
+  if (Nevr()) {
     std::string token = NevrToken();
     static bool logged = false;
     if (!logged || token.empty() != t.access.empty()) {
