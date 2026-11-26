@@ -96,6 +96,45 @@ jobs:
             echo "::error::EVR_SIGNING_KEY is not set on the '${{ github.ref_name == 'Main' && 'release' || 'beta' }}' environment"; exit 1
           fi
           mkdir -p rel/pc && cp runtime/evr-runtime.dll rel/pc/
+          # Release package sets (models: chassis, ...; runtime src/content, src/cosmetics). They are game-derived and
+          # large, so they are not in git: they live as assets of fixed per-platform content releases (manifest
+          # <16 hex>, package <16 hex>_<n>, made with runtime tools/make_set.cpp). PCVR sets (rad15/win10) are in
+          # "content-pc", Quest sets (rad15/android) in "content-quest". evr-sign builds a separate per-platform build
+          # from rel/pc and rel/quest, and each loader applies only its own platform's files (Platform::current), so a
+          # PCVR client never downloads Quest packages and a Quest client never downloads PCVR ones. Every release
+          # carries them; the updater copies an unchanged file from the installed version instead of re-downloading.
+          #
+          # fetch_content <release> <rel subdir> <rad15 platform dir>: lay a content release out as a loose-folder tree.
+          fetch_content() {
+            local rel_name="$1" sub="$2" plat="$3"
+            if gh release view "$rel_name" >/dev/null 2>&1; then
+              local m="rel/$sub/data/rad15/$plat/manifests" p="rel/$sub/data/rad15/$plat/packages"
+              mkdir -p "content-$sub" "$m" "$p"
+              gh release download "$rel_name" --dir "content-$sub"
+              for f in "content-$sub"/*; do
+                n=$(basename "$f")
+                if [[ "$n" =~ ^[0-9a-f]{16}$ ]]; then cp "$f" "$m/"
+                elif [[ "$n" =~ ^[0-9a-f]{16}_[0-9]+$ ]]; then cp "$f" "$p/"
+                fi
+              done
+              echo "$rel_name: $(ls "$m" | wc -l) set(s)"
+            else
+              echo "::warning::no $rel_name release: this release carries no $sub package sets"
+            fi
+          }
+          fetch_content content-pc pc win10
+          fetch_content content-quest quest android
+          # EchoCombat (runtime src/combat) needs its content pack beside the DLL. It is game-derived and large, so
+          # it is not in git: the fixed release "combat-pc" holds it as echocombat-pack.zip (content/echocombat/...
+          # and PowerBoost.ini, made with runtime/tools/make_combat_pack.py --zip). Without it the combat parts stay
+          # off and the game runs stock Combat.
+          if gh release view combat-pc >/dev/null 2>&1; then
+            gh release download combat-pc --pattern echocombat-pack.zip --dir combat
+            unzip -q combat/echocombat-pack.zip -d rel/pc
+            echo "combat-pc: $(ls rel/pc/content/echocombat/scripts | wc -l) script(s), PowerBoost.ini $(test -f rel/pc/PowerBoost.ini && echo yes || echo NO)"
+          else
+            echo "::warning::no combat-pc release: this release carries no EchoCombat pack (EchoCombat stays off)"
+          fi
           printf '%s' "$EVR_SIGNING_KEY" > signing.key
           ./tools/evr-sign.exe build --key signing.key --label RELEASE --version "${{ steps.v.outputs.version }}" \
             --channel "${{ steps.v.outputs.channel }}" --commit "$GITHUB_SHA" --dir rel \

@@ -1,0 +1,23 @@
+[package]
+name = "evr-loader-quest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+# Built as libevr_loader.so for aarch64-linux-android. The Quest patcher loads it into the r15 app process
+# (com.readyatdawn.r15); its ELF constructor runs early() when the library loads. The counterpart of evr-loader's
+# hid.dll on PC. On a non-Android host it still builds (as a stub cdylib) so `cargo build/test --workspace` passes.
+name = "evr_loader"
+crate-type = ["cdylib"]
+
+[dependencies]
+evr-manifest = { path = "../evr-manifest" }
+evr-updater = { path = "../evr-updater" }
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "0.2"

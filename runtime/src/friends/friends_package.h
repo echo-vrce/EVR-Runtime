@@ -181,13 +181,15 @@ inline bool SignedLess(const Resource& a, const Resource& b) {
 
 }  // namespace detail
 
-// Packs `resources` (one per (type, name), none empty) as one package. False when one is empty, a pair repeats, or
-// compression fails.
-inline bool BuildPackageSet(std::vector<Resource> resources, PackageSet* out) {
+// Packs `resources` (one per (type, name), none empty unless `allow_empty`) as one package. False when one is empty
+// (and not allowed), a pair repeats, or compression fails. Empty resources exist in the game's own packages (a model
+// archive can list a zero-byte lightmap payload); a set copying such a model keeps them.
+inline bool BuildPackageSet(std::vector<Resource> resources, PackageSet* out, bool allow_empty = false) {
   using detail::Put;
   std::sort(resources.begin(), resources.end(), detail::SignedLess);
+  if (resources.empty()) return false;
   for (std::size_t i = 0; i < resources.size(); ++i) {
-    if (resources[i].bytes.empty()) return false;
+    if (resources[i].bytes.empty() && !allow_empty) return false;
     if (i > 0 && resources[i].type == resources[i - 1].type && resources[i].name == resources[i - 1].name) return false;
   }
   // Blocks of at most kBlockSize bytes, resources in the sorted order (a resource larger than a block gets its own).

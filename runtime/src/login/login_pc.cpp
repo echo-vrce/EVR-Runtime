@@ -64,7 +64,7 @@ std::string ChannelSetting() {
 // The loader's channel for this boot (it asks Atlas: "beta" for /beta testers), else plugins\config.json's.
 std::string LoaderChannel() {
   using ChannelFn = std::size_t (*)(char*, std::size_t);
-  HMODULE h = GetModuleHandleA((evr::GameDir() + "\hid.dll").c_str());
+  HMODULE h = GetModuleHandleA((evr::GameDir() + "\\hid.dll").c_str());
   auto fn = h != nullptr ? reinterpret_cast<ChannelFn>(GetProcAddress(h, "EvrUpdateChannel")) : nullptr;
   if (fn == nullptr) return g_channel;
   char buf[32] = {};

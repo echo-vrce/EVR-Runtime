@@ -73,10 +73,16 @@ TEST(EarlyQuitLockout, ActiveFollowsSecondsLeft) {
 }
 
 TEST(EarlyQuitNotice, DueOnANewLockoutOrANewQuitOnly) {
-  EXPECT_TRUE(NoticeDue(true, true, 0, 0));
-  EXPECT_TRUE(NoticeDue(true, false, 2, 3));
-  EXPECT_FALSE(NoticeDue(true, false, 3, 3));   // a clear, or loyalty counters only
-  EXPECT_FALSE(NoticeDue(false, true, 0, 5));   // the game dropped the update
+  EXPECT_TRUE(NoticeDue(true, true, false));
+  EXPECT_TRUE(NoticeDue(true, false, true));
+  EXPECT_FALSE(NoticeDue(true, false, false));  // a clear, or loyalty counters only
+  EXPECT_FALSE(NoticeDue(false, true, true));   // the game dropped the update
+}
+
+TEST(EarlyQuitNotice, LoginCountIsNotANewQuit) {
+  EXPECT_FALSE(NewEarlyQuit(-1, 0, 10));  // first update after launch: the lifetime count, nothing new
+  EXPECT_TRUE(NewEarlyQuit(1795715286, 10, 11));
+  EXPECT_FALSE(NewEarlyQuit(1795715286, 10, 10));
 }
 
 TEST(EarlyQuitNotice, OnlyTheNoticeButtonsDismissIt) {

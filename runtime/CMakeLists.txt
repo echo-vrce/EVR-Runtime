@@ -43,17 +43,23 @@ add_executable(evr_tests
   tests/friends/test_friends_level.cpp
   tests/friends/test_friends_package.cpp
   tests/cdn/test_cdn_index.cpp
+  tests/cdn/test_cdn_catalog.cpp
+  tests/cosmetics/test_cosmetics_items.cpp
   tests/updates/test_updates.cpp
   tests/earlyquit/test_lockout_rules.cpp
   tests/menu/test_wording.cpp
   tests/party/test_party_rules.cpp
-  tests/content/test_content_sets.cpp)
+  tests/content/test_content_sets.cpp
+  tests/core/test_seh.cpp src/core/seh_pc.cpp)
 target_link_libraries(evr_tests PRIVATE evr_friends_logic GTest::gtest_main nlohmann_json::nlohmann_json)
 add_test(NAME evr_tests COMMAND evr_tests)
+# The combat Detours shim runs on MinHook (built below); its test joins evr_tests once MinHook exists.
 
 # Dev tool: writes a one-texture package set (the UPDATE card, solid magenta) to test which mounted set wins.
 add_executable(evr_make_test_set tools/make_test_set.cpp)
 target_link_libraries(evr_make_test_set PRIVATE evr_friends_logic)
+add_executable(evr_make_set tools/make_set.cpp)
+target_link_libraries(evr_make_set PRIVATE evr_friends_logic)
 
 # ---- PC runtime DLL ----
 FetchContent_Declare(minhook URL https://github.com/TsudaKageyu/minhook/archive/refs/tags/v1.3.3.tar.gz
@@ -82,26 +88,43 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/generated/cdn_pinned_keys.h
   "#pragma once\ninline constexpr const char* kCdnPinnedText = R\"KEYS(${EVR_CDN_PINNED})KEYS\";\n")
 
 add_library(evr_core STATIC src/core/core_pc.cpp src/core/resources_pc.cpp src/core/ui_text_pc.cpp src/core/frame_pc.cpp
-  src/core/events_pc.cpp src/core/actors_pc.cpp src/core/crashlog_pc.cpp src/core/packages_pc.cpp)
+  src/core/events_pc.cpp src/core/actors_pc.cpp src/core/crashlog_pc.cpp src/core/packages_pc.cpp
+  src/core/seh_pc.cpp)
 target_include_directories(evr_core PUBLIC include)
 target_link_libraries(evr_core PUBLIC evr_minhook winhttp)
 
 add_library(evr_runtime SHARED src/runtime_main.cpp src/menu/create_join_pc.cpp src/menu/invite_pc.cpp
   src/friends/friends_install_pc.cpp src/friends/friends_panel_resources.cpp src/friends/friends_panel_pc.cpp
   src/friends/menu_friends_pack.cpp src/friends/menu_friends_profile.cpp src/friends/menu_friends_avatars.cpp
-  src/social/social_pc.cpp src/login/login_pc.cpp src/login/provider_redirect_pc.cpp
+  src/social/social_pc.cpp src/login/login_pc.cpp
   src/login/unlocks_probe_pc.cpp src/cdn/cdn_pc.cpp src/updates/updates_pc.cpp
   src/earlyquit/lockout_pc.cpp src/menu/wording_pc.cpp src/menu/queue_pc.cpp
-  src/content/content_pc.cpp)
+  src/content/content_pc.cpp src/cosmetics/cosmetics_pc.cpp)
 # Parties have never run in the game: off by default, so the normal build is the one safe to install.
 option(EVR_PARTY "Build the party code (src/party) into the runtime DLL" OFF)
 if(EVR_PARTY)
   target_sources(evr_runtime PRIVATE src/party/party_pc.cpp)
   target_compile_definitions(evr_runtime PRIVATE EVR_PARTY=1)
 endif()
+# EchoCombat (src/combat): its content pack server, DroneFix, PowerBoost and VeilNet, built in. The sources were
+# MSVC plugins (EchoCombat's nevr-pack branch): compat.h is included first, shim/ stands in for Detours and nEVR's
+# plugin API, and each part's entry points get their own names; combat_pc.cpp starts them.
+set(EVR_COMBAT_PARTS content dronefix powerboost veilnet)
+foreach(part ${EVR_COMBAT_PARTS})
+  target_sources(evr_runtime PRIVATE src/combat/${part}.cpp)
+  set_source_files_properties(src/combat/${part}.cpp PROPERTIES
+    COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/combat/compat.h;-Wno-unused-function;-Wno-unused-variable;-Wno-cast-function-type"
+    COMPILE_DEFINITIONS "NvrPluginInitEx=evr_combat_${part}_init;NvrPluginInit=evr_combat_${part}_init0;NvrPluginShutdown=evr_combat_${part}_shutdown;NvrPluginGetInfo=evr_combat_${part}_info;NvrPluginGetApiVersion=evr_combat_${part}_api;NvrPluginGetCapabilities=evr_combat_${part}_caps;DllMain=evr_combat_${part}_dllmain")
+endforeach()
+target_sources(evr_runtime PRIVATE src/combat/detours_shim_pc.cpp src/combat/combat_pc.cpp)
+target_include_directories(evr_runtime PRIVATE src/combat/shim src/combat)
+target_link_libraries(evr_runtime PRIVATE ws2_32)
+target_sources(evr_tests PRIVATE tests/combat/test_detours_shim.cpp src/combat/detours_shim_pc.cpp)
+target_include_directories(evr_tests PRIVATE src/combat)
+target_link_libraries(evr_tests PRIVATE evr_minhook)
 set_target_properties(evr_runtime PROPERTIES OUTPUT_NAME "evr-runtime" PREFIX "")
 target_link_libraries(evr_runtime PRIVATE evr_core evr_friends_logic nlohmann_json::nlohmann_json zlibstatic
-  evr_monocypher bcrypt)
+  evr_monocypher bcrypt shell32 psapi)
 target_include_directories(evr_runtime PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 # zlib's CMake puts zconf.h in its build tree.
 target_include_directories(evr_runtime PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
@@ -110,6 +133,7 @@ if(MINGW)
   target_link_options(evr_runtime PRIVATE -static -static-libgcc -static-libstdc++)
   target_link_options(evr_tests PRIVATE -static)
   target_link_options(evr_make_test_set PRIVATE -static)
+  target_link_options(evr_make_set PRIVATE -static)
 endif()
 
 # The evr_runtime login declaration's build and commit (git describe of this tree; "dev" outside git).

@@ -32,8 +32,8 @@ struct Ours {
   std::string package_path;
   std::string label;
   std::mutex mutex;
-  bool loaded = false, failed = false, judged = false;
-  Bytes bytes;
+  bool loaded = false, failed = false, judged = false, won = false;
+  Bytes bytes;  // ours, held only while the game may still read a stock copy
 };
 
 Options g_options;
@@ -76,13 +76,25 @@ std::vector<std::string> ListFiles(const std::string& dir) {
   return names;
 }
 
-// Resource-read thread(s): our bytes on first use, the verdict once, ours served when stock was read.
+// Reads only the compressed block that holds resource `index`.
+bool ReadResource(const std::string& path, const Manifest& m, std::size_t index, Bytes* out) {
+  const BlockRecord& b = m.blocks[m.resources[index].block];
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (f == nullptr) return false;
+  Bytes block(b.compressed);
+  const bool ok = _fseeki64(f, b.offset, SEEK_SET) == 0 && std::fread(block.data(), 1, block.size(), f) == block.size();
+  std::fclose(f);
+  return ok && ExtractResourceFromBlock(m, index, block, out);
+}
+
+// Resource-read thread(s): our bytes on first use, the verdict once, ours served when stock was read. Once the game
+// is seen reading our own copy the set wins for good: our bytes are dropped and later reads pass straight through.
 bool Transform(const void* original, std::uint64_t size, const void** out, std::uint64_t* outSize, void* user) {
   Ours& o = *static_cast<Ours*>(user);
   std::lock_guard<std::mutex> lock(o.mutex);
+  if (o.won) return false;
   if (!o.loaded && !o.failed) {
-    Bytes package;
-    o.failed = !ReadAll(o.package_path, &package) || !ExtractResource(*o.manifest, o.index, package, &o.bytes);
+    o.failed = !ReadResource(o.package_path, *o.manifest, o.index, &o.bytes);
     o.loaded = !o.failed;
     if (o.failed)
       evr::Log(evr::LogLevel::Warning, "[EVR.CONTENT] %s: could not read our copy from %s", o.label.c_str(),
@@ -96,6 +108,10 @@ bool Transform(const void* original, std::uint64_t size, const void** out, std::
     evr::Log(evr::LogLevel::Info, "[EVR.CONTENT] %s read: game got %s (read %llu bytes, ours %zu)%s", o.label.c_str(),
              v == ReadVerdict::Ours ? "OUR copy (set wins)" : "ANOTHER copy (stock wins)", (unsigned long long)size,
              o.bytes.size(), serve ? "; serving ours" : "");
+  }
+  if (v == ReadVerdict::Ours) {
+    o.won = true;
+    Bytes().swap(o.bytes);
   }
   if (!serve) return false;
   *out = o.bytes.data();
@@ -188,6 +204,12 @@ std::uint32_t DeserializeProbe(std::uint8_t* resource, void* streams) {
 }
 
 }  // namespace
+
+bool SetMounted(std::uint64_t set) {
+  for (std::uint64_t s : g_sets)
+    if (s == set) return true;
+  return false;
+}
 
 void Install(const Options& options) {
   g_options = options;

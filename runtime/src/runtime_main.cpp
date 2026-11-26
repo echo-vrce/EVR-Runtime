@@ -1,6 +1,7 @@
 // evr-runtime.dll entry. Loaded by the loader (hid.dll) from the active loose folder before echovr.exe's own entry point
 // runs, so engine hooks are in place before CEngine::Init.
 #include <windows.h>
+#include <shellapi.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -17,16 +18,18 @@
 #include "evr/ui_text.h"
 #include "cdn/cdn.h"
 #include "content/content.h"
+#include "cosmetics/cosmetics.h"
 #include "earlyquit/lockout.h"
 #include "menu/wording.h"
 #include "friends/friends_install.h"
 #include "login/login.h"
-#include "login/provider_redirect.h"
 #include "login/unlocks_probe.h"
 #include "menu/create_join.h"
 #include "menu/invite.h"
 #include "menu/queue.h"
 #include "evr/crashlog.h"
+#include "evr/seh.h"
+#include "combat/combat.h"
 #if EVR_PARTY
 #include "party/party.h"
 #endif
@@ -74,6 +77,15 @@ int LogEventsSetting() {
 
 // plugins\config.json "queue_gate": true opens the matchmaker queue's platform gate (menu/queue_pc.cpp). Off by
 // default: with it on the game crashed on the first social lobby find (2026-11-17 22:23 and 22:28).
+// plugins\config.json "combat": false turns EchoCombat (combat/) off; on by default.
+bool CombatSetting() {
+  try {
+    return ReadConfig().value("combat", true);
+  } catch (const nlohmann::json::exception&) {
+    return true;
+  }
+}
+
 bool QueueGateSetting() {
   try {
     return ReadConfig().value("queue_gate", false);
@@ -105,6 +117,17 @@ evr_content::Options ContentSettings() {
   return o;
 }
 
+// Whether the game was started as a dedicated server: `-server` among its command-line arguments (any case).
+bool IsServerLaunch() {
+  int argc = 0;
+  LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  if (!argv) return false;
+  bool server = false;
+  for (int i = 1; i < argc && !server; ++i) server = _wcsicmp(argv[i], L"-server") == 0;
+  LocalFree(argv);
+  return server;
+}
+
 }  // namespace
 
 extern "C" __declspec(dllexport) int EvrRuntimeStart(const char* version) {
@@ -112,6 +135,22 @@ extern "C" __declspec(dllexport) int EvrRuntimeStart(const char* version) {
   evr::Log(evr::LogLevel::Info, "[EVR] runtime %s start: game timestamp=0x%08x image=0x%x", version ? version : "?",
            b.timestamp, b.sizeOfImage);
   evr::InstallCrashLog();  // first: names any later crash in evr-runtime.log
+  evr::InstallFaultGuard();  // after the crash log: a fault a guard catches is not logged as a crash
+  const bool server = IsServerLaunch();
+  // EchoCombat, on clients and servers alike (a combat server runs its scripts): its content before the game reads
+  // its manifests, its gear once the runtime's own hooks are in (combat/combat.h).
+  const bool combat = CombatSetting();
+  if (combat) evr_combat::InstallContent(server);
+  else evr::Log(evr::LogLevel::Info, "[EVR.COMBAT] off (config.json \"combat\": false)");
+  if (server) {
+    // A dedicated server (`-server`): login only (the runtime declaration). Every client
+    // change (menus, item list, content sets, CDN, friends, queue, updates) is skipped: with them the server failed
+    // to load the lobby level ("[NETGAME] Failed to load level", mpl_lobby_b2, 2026-11-18).
+    evr::Log(evr::LogLevel::Info, "[EVR] server launch (-server): client changes skipped");
+    evr_login::Install(version);
+    if (combat) evr_combat::InstallGear(true);
+    return 0;
+  }
   evr::InstallResourceHook();
   evr_earlyquit::Install();  // registers frame and event callbacks
   if (QueueGateSetting()) evr_queue::Install(QueueEstimateScaleSetting());  // before login: the queue mode is read when login settings arrive
@@ -123,6 +162,7 @@ extern "C" __declspec(dllexport) int EvrRuntimeStart(const char* version) {
   evr::InstallFrameHook();
   evr_friends::Install();  // registers its frame and event callbacks
   evr_content::Install(ContentSettings());  // the release's own package sets (after friends: same AddPackage hook)
+  evr_cosmetics::Install();  // Story rarity, booth source lines, release chassis (needs content; before the CDN)
   evr_create_join::Install();
   const int logEvents = LogEventsSetting();
   evr_updates::Install();  // after the friends panel: its level edits run first
@@ -130,10 +170,12 @@ extern "C" __declspec(dllexport) int EvrRuntimeStart(const char* version) {
   evr::InstallEventHook();
   evr::InstallActorHooks(logEvents);
   evr_invite::Install(logEvents > 0);
-  evr_provider::Install();  // pnsovr -> pnsdemo, so login works without -noovr (no Oculus prerequisites)
+  // No provider redirect (pnsovr -> pnsdemo): nEVR signs the player in (echovrce.com/device) and the runtime runs on
+  // top of it, using nEVR's token for friends and parties (social/social_pc.cpp).
   evr_login::Install(version);
   if (logEvents > 0) evr_unlocks_probe::Install();
   evr_cdn::Start();
+  if (combat) evr_combat::InstallGear(false);  // last: after every runtime hook (combat/combat.h)
   // Features install here, each guarded by its own prologue checks:
   //   friends panel (resource transforms, AddPackage, avatars), update panel, CDN cosmetics/posters,
   //   early-quit lockout countdown.

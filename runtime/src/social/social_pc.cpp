@@ -197,6 +197,25 @@ void Worker() {
   }
 }
 
+// nEVR (nevr-runtime.dll) signs the player in through echovrce.com/device and keeps the session token; friends and
+// parties use that token when nEVR is loaded, so a player's nEVR friends are the friends shown here.
+HMODULE Nevr() { return GetModuleHandleW(L"nevr-runtime.dll"); }
+
+std::string NevrToken() {
+  using GetToken = const char* (*)();
+  HMODULE h = Nevr();
+  auto fn = h ? reinterpret_cast<GetToken>(GetProcAddress(h, "TokenAuth_GetToken")) : nullptr;
+  const char* token = fn ? fn() : nullptr;
+  return token != nullptr ? std::string(token) : std::string();
+}
+
+std::uint64_t NevrDiscordId() {
+  using GetId = std::uint64_t (*)();
+  HMODULE h = Nevr();
+  auto fn = h ? reinterpret_cast<GetId>(GetProcAddress(h, "TokenAuth_GetDiscordId")) : nullptr;
+  return fn ? fn() : 0;
+}
+
 }  // namespace
 
 std::uint32_t Roster::Online() const {
@@ -261,6 +280,7 @@ std::string ServiceBase() {
 }
 
 std::uint64_t AccountId() {
+  if (const std::uint64_t id = NevrDiscordId()) return id;
   std::lock_guard<std::mutex> lock(T().mutex);
   const std::string& id = Cfg().discordId;
   if (id.empty() || id.size() > 20 || id.find_first_not_of("0123456789") != std::string::npos) return 0;
@@ -272,6 +292,16 @@ std::string Token() {
   std::lock_guard<std::mutex> lock(t.mutex);
   const Config& c = Cfg();
   const std::uint64_t now = GetTickCount64();
+  if (Nevr() != nullptr) {
+    std::string token = NevrToken();
+    static bool logged = false;
+    if (!logged || token.empty() != t.access.empty()) {
+      Log(LogLevel::Info, "[EVR.SOCIAL] %s", token.empty() ? "nEVR loaded, not signed in yet" : "using nEVR's sign-in token");
+      logged = true;
+    }
+    t.access = token;
+    return token;
+  }
   if (!t.access.empty() && now < t.expiresAtMs) return t.access;
   if (now < t.retryAtMs) return "";
   if (c.base.empty() || c.discordId.empty() || c.password.empty()) {

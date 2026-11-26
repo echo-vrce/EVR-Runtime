@@ -171,9 +171,26 @@ impl Updater {
         let files: Vec<&FileEntry> = o.build.files.iter().chain(&o.manifest.changelog.images).collect();
         let total: u64 = files.iter().map(|f| f.size).sum();
         let mut done = 0;
+        // A file the installed (or pending) version already has with the same hash is copied, not downloaded:
+        // release package sets (data/...) are large and rarely change between versions.
+        let st = self.state();
+        let have: Vec<PathBuf> = [st.pending, st.installed, st.last_good]
+            .into_iter()
+            .flatten()
+            .filter(|v| *v != o.manifest.version)
+            .map(|v| self.cfg.root.join("versions").join(v.to_string()))
+            .collect();
         for f in files {
             m::check_path(&f.path)?;
-            let bytes = fetch(f)?;
+            let local = have.iter().find_map(|d| {
+                let p = d.join(&f.path);
+                let b = fs::read(p).ok()?;
+                m::check_file(f, &b).ok().map(|_| b)
+            });
+            let bytes = match local {
+                Some(b) => b,
+                None => fetch(f)?,
+            };
             m::check_file(f, &bytes)?;
             let p = staging.join(&f.path);
             fs::create_dir_all(p.parent().unwrap())?;
